@@ -13,6 +13,7 @@ use App\Services\AuditService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
@@ -113,9 +114,17 @@ class MedicineController extends Controller
      */
     public function update(UpdateMedicineRequest $request, Medicine $medicine, AuditService $auditService): RedirectResponse
     {
-        $oldValues = $medicine->toArray();
-        $medicine->update($request->validated());
-        $auditService->record('medicine_updated', "Updated medicine {$medicine->generic_name}.", $medicine, $oldValues, $medicine->fresh()->toArray());
+        $medicine->fill(Arr::except($request->validated(), ['authorization_pin']));
+        $changes = $medicine->getDirty();
+
+        if ($changes === []) {
+            return redirect()->route('medicines.show', $medicine)->with('success', 'No medicine changes were made.');
+        }
+
+        $oldValues = Arr::only($medicine->getOriginal(), array_keys($changes));
+        $medicine->save();
+        $newValues = $medicine->fresh()->only(array_keys($changes));
+        $auditService->record('medicine_updated', "Updated medicine {$medicine->generic_name}.", $medicine, $oldValues, $newValues);
 
         return redirect()->route('medicines.show', $medicine)->with('success', 'Medicine updated successfully.');
     }

@@ -2,9 +2,12 @@
 
 namespace App\Http\Requests;
 
+use App\Models\Setting;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Validator;
 
 class UpdateMedicineRequest extends FormRequest
 {
@@ -15,7 +18,7 @@ class UpdateMedicineRequest extends FormRequest
 
         $this->merge([
             'dosage_form' => $this->input('dosage_form', $medicine?->dosage_form ?? 'Unspecified'),
-            'maximum_stock_level' => max(100, (int) $existingMaximum, (int) $this->input('minimum_stock_level', 10)),
+            'maximum_stock_level' => $existingMaximum,
         ]);
     }
 
@@ -55,6 +58,25 @@ class UpdateMedicineRequest extends FormRequest
             'storage_condition' => ['nullable', 'string', 'max:255'],
             'description' => ['nullable', 'string', 'max:2000'],
             'status' => ['required', 'in:active,inactive'],
+            'authorization_pin' => ['required', 'digits:4'],
         ];
+    }
+
+    /**
+     * @return array<int, callable(Validator): void>
+     */
+    public function after(): array
+    {
+        return [function (Validator $validator): void {
+            if ($validator->errors()->has('authorization_pin')) {
+                return;
+            }
+
+            $pinHash = Setting::value('medicine_edit_pin');
+
+            if (! filled($pinHash) || ! Hash::check((string) $this->input('authorization_pin'), (string) $pinHash)) {
+                $validator->errors()->add('authorization_pin', 'The authorization PIN is incorrect or has not been configured by an administrator.');
+            }
+        }];
     }
 }

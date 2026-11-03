@@ -6,17 +6,28 @@ use App\Models\Setting;
 use App\Services\AuditService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Validation\Rule;
 use Illuminate\View\View;
 
 class SettingController extends Controller
 {
     public function edit(): View
     {
-        return view('settings.edit', ['settings' => Setting::query()->pluck('value', 'key')]);
+        $settings = Setting::query()->pluck('value', 'key');
+        $medicineEditPinConfigured = filled($settings->pull('medicine_edit_pin'));
+
+        return view('settings.edit', [
+            'settings' => $settings,
+            'medicineEditPinConfigured' => $medicineEditPinConfigured,
+        ]);
     }
 
     public function update(Request $request, AuditService $auditService): RedirectResponse
     {
+        $pinAlreadyConfigured = filled(Setting::query()->where('key', 'medicine_edit_pin')->value('value'));
+        $changingPin = $pinAlreadyConfigured && filled($request->input('medicine_edit_pin'));
+
         $data = $request->validate([
             'system_name' => ['required', 'string', 'max:255'],
             'facility_name' => ['required', 'string', 'max:255'],
@@ -25,12 +36,35 @@ class SettingController extends Controller
             'address' => ['nullable', 'string', 'max:1000'],
             'low_stock_threshold' => ['required', 'integer', 'min:0', 'max:10000'],
             'expiration_warning_days' => ['required', 'integer', 'min:1', 'max:365'],
-            'date_format' => ['required', 'in:M d, Y,d/m/Y,m/d/Y,Y-m-d'],
+            'date_format' => ['required', Rule::in(['M d, Y', 'd/m/Y', 'm/d/Y', 'Y-m-d'])],
             'timezone' => ['required', 'timezone'],
             'notification_low_stock' => ['required', 'boolean'],
             'notification_expiration' => ['required', 'boolean'],
             'default_theme' => ['required', 'in:light,dark,system'],
+            'current_password' => [
+                Rule::requiredIf(fn (): bool => $changingPin),
+                'nullable',
+                'string',
+            ],
+            'medicine_edit_pin' => [
+                Rule::requiredIf(fn (): bool => ! $pinAlreadyConfigured),
+                'nullable',
+                'digits:4',
+                'confirmed',
+            ],
         ]);
+
+        $medicineEditPin = $data['medicine_edit_pin'] ?? null;
+        $currentPassword = $data['current_password'] ?? null;
+        unset($data['medicine_edit_pin'], $data['current_password']);
+
+        if (filled($medicineEditPin) && $pinAlreadyConfigured) {
+            if (! auth()->validate(['email' => $request->user()->email, 'password' => $currentPassword])) {
+                return back()->withInput($request->except('current_password'))->withErrors([
+                    'current_password' => 'The current password is incorrect.',
+                ]);
+            }
+        }
 
         $booleanKeys = ['notification_low_stock', 'notification_expiration'];
         $integerKeys = ['low_stock_threshold', 'expiration_warning_days'];
@@ -49,6 +83,19 @@ class SettingController extends Controller
                     'is_public' => in_array($key, ['system_name', 'facility_name'], true),
                 ],
             );
+        }
+
+        if (filled($medicineEditPin)) {
+            Setting::query()->updateOrCreate(
+                ['key' => 'medicine_edit_pin'],
+                [
+                    'value' => Hash::make($medicineEditPin),
+                    'type' => 'secret',
+                    'group' => 'security',
+                    'is_public' => false,
+                ],
+            );
+            $auditService->record('authorization_pin_updated', 'Updated the shared medicine authorization PIN.');
         }
 
         $auditService->record('settings_updated', 'Updated system settings.', null, null, $data);
