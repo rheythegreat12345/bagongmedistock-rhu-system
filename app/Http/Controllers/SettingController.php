@@ -6,7 +6,9 @@ use App\Models\Setting;
 use App\Services\AuditService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 use Illuminate\View\View;
 
@@ -26,9 +28,8 @@ class SettingController extends Controller
     public function update(Request $request, AuditService $auditService): RedirectResponse
     {
         $pinAlreadyConfigured = filled(Setting::query()->where('key', 'medicine_edit_pin')->value('value'));
-        $changingPin = $pinAlreadyConfigured && filled($request->input('medicine_edit_pin'));
-
-        $data = $request->validate([
+        $changingPin = $request->filled('medicine_edit_pin');
+        $validator = Validator::make($request->all(), [
             'system_name' => ['required', 'string', 'max:255'],
             'facility_name' => ['required', 'string', 'max:255'],
             'contact_phone' => ['nullable', 'string', 'max:40'],
@@ -42,7 +43,8 @@ class SettingController extends Controller
             'notification_expiration' => ['required', 'boolean'],
             'default_theme' => ['required', 'in:light,dark,system'],
             'current_password' => [
-                Rule::requiredIf(fn (): bool => $changingPin),
+                Rule::requiredIf(fn (): bool => $pinAlreadyConfigured && $changingPin),
+                Rule::prohibitedIf(fn (): bool => ! $changingPin),
                 'nullable',
                 'string',
             ],
@@ -52,17 +54,28 @@ class SettingController extends Controller
                 'digits:4',
                 'confirmed',
             ],
+        ], [
+            'current_password.prohibited' => 'Enter a new PIN before providing the administrator password.',
         ]);
 
+        if ($validator->fails()) {
+            return back()
+                ->withErrors($validator)
+                ->withInput($request->except(['medicine_edit_pin', 'medicine_edit_pin_confirmation', 'current_password']));
+        }
+
+        $data = $validator->validated();
         $medicineEditPin = $data['medicine_edit_pin'] ?? null;
         $currentPassword = $data['current_password'] ?? null;
         unset($data['medicine_edit_pin'], $data['current_password']);
 
         if (filled($medicineEditPin) && $pinAlreadyConfigured) {
-            if (! auth()->validate(['email' => $request->user()->email, 'password' => $currentPassword])) {
-                return back()->withInput($request->except('current_password'))->withErrors([
-                    'current_password' => 'The current password is incorrect.',
-                ]);
+            $user = $request->user();
+
+            if (! $user || ! Auth::validate(['email' => $user->email, 'password' => (string) $currentPassword])) {
+                return back()
+                    ->withInput($request->except(['medicine_edit_pin', 'medicine_edit_pin_confirmation', 'current_password']))
+                    ->withErrors(['current_password' => 'The current administrator password is incorrect.']);
             }
         }
 

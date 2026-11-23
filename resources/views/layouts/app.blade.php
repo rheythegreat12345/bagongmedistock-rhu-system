@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>@yield('title', 'Dashboard') · {{ $systemSettings['system_name'] ?? 'MediStock RHU' }}</title>
+    <link rel="icon" type="image/png" href="{{ asset('images/sudipen-rhu-seal.jpg') }}">
     <script>document.documentElement.dataset.theme=(localStorage.getItem('theme')==='dark'||(localStorage.getItem('theme')!=='light'&&matchMedia('(prefers-color-scheme: dark)').matches))?'dark':'light';</script>
     @vite(['resources/css/app.css', 'resources/js/app.js'])
     @stack('head')
@@ -66,15 +67,15 @@
         <header class="topbar">
             <button class="icon-button sidebar-toggle" type="button" data-sidebar-toggle aria-label="Toggle sidebar"><x-icon name="menu" /></button>
             @if(auth()->user()->hasPermission('medicines.view'))
-                <div class="global-search">
+                <form class="global-search" role="search" autocomplete="off" data-live-search-form>
                     <label class="global-search-label" for="live-global-search">Live medicine search</label>
                     <div class="global-search-control">
                         <x-icon name="search" />
-                        <input id="live-global-search" type="search" autocomplete="off" placeholder="Search medicines, batches, or suppliers..." data-live-global-search data-url="{{ route('search') }}" aria-controls="live-search-results" aria-expanded="false">
+                        <input id="live-global-search" name="medicine_search" type="search" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Search medicines, batches, or suppliers..." data-live-global-search data-url="{{ route('search') }}" aria-controls="live-search-results" aria-expanded="false">
                         <span class="search-shortcut">Ctrl K</span>
                     </div>
                     <div class="search-results" id="live-search-results" data-live-search-results role="listbox" hidden></div>
-                </div>
+                </form>
             @endif
             <span class="topbar-spacer"></span>
             <div class="topbar-actions">

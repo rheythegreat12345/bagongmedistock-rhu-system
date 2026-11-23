@@ -6,15 +6,18 @@ use App\Http\Requests\StoreMedicineRequest;
 use App\Http\Requests\UpdateMedicineRequest;
 use App\Models\AuditLog;
 use App\Models\Medicine;
+use App\Models\MedicineBatch;
 use App\Models\MedicineCategory;
-use App\Models\StorageLocation;
 use App\Models\Supplier;
+use App\Services\AlertService;
 use App\Services\AuditService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -27,6 +30,7 @@ class MedicineController extends Controller
     public function index(Request $request): View
     {
         $medicines = $this->filteredQuery($request)
+            ->with(['batches' => fn ($query) => $query->with('supplier')->orderBy('expiration_date')])
             ->paginate(15)
             ->withQueryString();
 
@@ -34,7 +38,6 @@ class MedicineController extends Controller
             'medicines' => $medicines,
             'categories' => MedicineCategory::query()->where('is_active', true)->orderBy('name')->get(),
             'suppliers' => Supplier::query()->where('is_active', true)->orderBy('name')->get(),
-            'locations' => StorageLocation::query()->where('is_active', true)->orderBy('name')->get(),
             'showArchived' => false,
         ]);
     }
@@ -53,7 +56,6 @@ class MedicineController extends Controller
             'medicines' => $medicines,
             'categories' => MedicineCategory::query()->where('is_active', true)->orderBy('name')->get(),
             'suppliers' => Supplier::query()->where('is_active', true)->orderBy('name')->get(),
-            'locations' => StorageLocation::query()->where('is_active', true)->orderBy('name')->get(),
             'showArchived' => true,
         ]);
     }
@@ -87,7 +89,7 @@ class MedicineController extends Controller
     {
         $medicine->load([
             'category',
-            'batches' => fn ($query) => $query->with(['supplier', 'storageLocation'])->orderBy('expiration_date'),
+            'batches' => fn ($query) => $query->with('supplier')->orderBy('expiration_date'),
             'transactions' => fn ($query) => $query->with(['batch', 'user'])->latest('transacted_at')->limit(20),
         ])->loadSum('batches as current_stock', 'quantity');
 
@@ -109,6 +111,23 @@ class MedicineController extends Controller
         ]);
     }
 
+    public function editBatchExpiration(Medicine $medicine, MedicineBatch $batch): View
+    {
+        abort_unless((int) $batch->medicine_id === (int) $medicine->id, 404);
+
+        $medicine->load('category')->loadSum('batches as current_stock', 'quantity');
+        $batch->load('supplier');
+
+        return view('medicines.batch-expiration', [
+            'medicine' => $medicine,
+            'batch' => $batch,
+            'suppliers' => Supplier::withTrashed()
+                ->where(fn ($query) => $query->where('is_active', true)->orWhere('id', $batch->supplier_id))
+                ->orderBy('name')
+                ->get(),
+        ]);
+    }
+
     /**
      * Update the specified resource in storage.
      */
@@ -127,6 +146,96 @@ class MedicineController extends Controller
         $auditService->record('medicine_updated', "Updated medicine {$medicine->generic_name}.", $medicine, $oldValues, $newValues);
 
         return redirect()->route('medicines.show', $medicine)->with('success', 'Medicine updated successfully.');
+    }
+
+    public function updateBatchExpiration(
+        Request $request,
+        Medicine $medicine,
+        MedicineBatch $batch,
+        AlertService $alertService,
+        AuditService $auditService,
+    ): RedirectResponse {
+        abort_unless((int) $batch->medicine_id === (int) $medicine->id, 404);
+
+        $data = $request->validate([
+            'batch_number' => [
+                'required',
+                'string',
+                'max:80',
+                Rule::unique('medicine_batches', 'batch_number')
+                    ->where(fn ($query) => $query->where('medicine_id', $medicine->id))
+                    ->ignore($batch->id),
+            ],
+            'lot_number' => ['nullable', 'string', 'max:80'],
+            'supplier_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('suppliers', 'id')
+                    ->where(fn ($query) => $query->where('is_active', true)->orWhere('id', $batch->supplier_id)),
+            ],
+            'expiration_date' => ['required', 'date'],
+            'unit_cost' => ['required', 'numeric', 'min:0', 'max:9999999999.99'],
+            'status' => ['required', Rule::in(['active', 'inactive'])],
+            'received_at' => ['present', 'nullable', 'date', 'before_or_equal:today'],
+        ]);
+        $data['expiration_date'] = Carbon::parse($data['expiration_date'])->toDateString();
+        $data['received_at'] = filled($data['received_at'])
+            ? Carbon::parse($data['received_at'])->toDateString()
+            : null;
+
+        $changed = DB::transaction(function () use ($auditService, $batch, $data, $medicine): bool {
+            $lockedBatch = MedicineBatch::query()
+                ->where('medicine_id', $medicine->id)
+                ->lockForUpdate()
+                ->findOrFail($batch->id);
+
+            if ($lockedBatch->manufacturing_date && $data['expiration_date'] < $lockedBatch->manufacturing_date->toDateString()) {
+                throw ValidationException::withMessages([
+                    'expiration_date' => 'The expiration date cannot be before the manufacturing date.',
+                ]);
+            }
+
+            $previousBatchNumber = $lockedBatch->batch_number;
+            $lockedBatch->fill($data);
+            $changes = $lockedBatch->getDirty();
+
+            if ($changes === []) {
+                return false;
+            }
+
+            $oldValues = ['batch_id' => $lockedBatch->id] + Arr::only($lockedBatch->getRawOriginal(), array_keys($changes));
+            $lockedBatch->save();
+            $newValues = ['batch_id' => $lockedBatch->id] + Arr::only($lockedBatch->getAttributes(), array_keys($changes));
+
+            foreach (['expiration_date', 'received_at'] as $dateField) {
+                if (isset($oldValues[$dateField])) {
+                    $oldValues[$dateField] = Carbon::parse($oldValues[$dateField])->toDateString();
+                }
+
+                if (isset($newValues[$dateField])) {
+                    $newValues[$dateField] = Carbon::parse($newValues[$dateField])->toDateString();
+                }
+            }
+
+            $auditService->record(
+                'batch_updated',
+                "Updated batch {$previousBatchNumber} of {$medicine->generic_name}.",
+                $medicine,
+                $oldValues,
+                $newValues,
+            );
+
+            return true;
+        });
+
+        if ($changed) {
+            $alertService->syncMedicine($medicine);
+        }
+
+        return redirect()->route('medicines.show', $medicine)->with(
+            'success',
+            $changed ? 'Batch details updated.' : 'No batch changes were made.',
+        );
     }
 
     /**
@@ -313,7 +422,6 @@ class MedicineController extends Controller
 
         $query->when($request->integer('category'), fn (Builder $builder, int $categoryId) => $builder->where('medicine_category_id', $categoryId))
             ->when($request->integer('supplier'), fn (Builder $builder, int $supplierId) => $builder->whereHas('batches', fn (Builder $batchQuery) => $batchQuery->where('supplier_id', $supplierId)))
-            ->when($request->integer('location'), fn (Builder $builder, int $locationId) => $builder->whereHas('batches', fn (Builder $batchQuery) => $batchQuery->where('storage_location_id', $locationId)))
             ->when($request->date('date_from'), fn (Builder $builder, $date) => $builder->whereDate('created_at', '>=', $date))
             ->when($request->date('date_to'), fn (Builder $builder, $date) => $builder->whereDate('created_at', '<=', $date));
 

@@ -15,7 +15,7 @@ class MedicineBatch extends Model
     use HasFactory;
 
     protected $fillable = [
-        'medicine_id', 'supplier_id', 'storage_location_id', 'batch_number', 'lot_number',
+        'medicine_id', 'supplier_id', 'batch_number', 'lot_number',
         'manufacturing_date', 'expiration_date', 'quantity', 'unit_cost', 'received_at', 'status',
     ];
 
@@ -37,11 +37,6 @@ class MedicineBatch extends Model
     public function supplier(): BelongsTo
     {
         return $this->belongsTo(Supplier::class);
-    }
-
-    public function storageLocation(): BelongsTo
-    {
-        return $this->belongsTo(StorageLocation::class);
     }
 
     public function transactions(): HasMany

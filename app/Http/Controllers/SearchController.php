@@ -5,7 +5,6 @@ namespace App\Http\Controllers;
 use App\Models\Medicine;
 use App\Models\MedicineBatch;
 use App\Models\MedicineCategory;
-use App\Models\StorageLocation;
 use App\Models\Supplier;
 use App\Models\User;
 use App\Services\AuditService;
@@ -13,6 +12,7 @@ use App\Services\InventoryService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
@@ -56,10 +56,11 @@ class SearchController extends Controller
     {
         $data = $request->validate([
             'barcode' => ['required', 'string', 'min:3', 'max:80'],
-            'scan_action' => ['nullable', Rule::in(['lookup', 'stock_in', 'restock', 'new_medicine', 'dispense'])],
+            'scan_action' => ['nullable', Rule::in(['lookup', 'new_medicine', 'restock', 'dispense'])],
         ]);
 
         $searchTerm = trim($data['barcode']);
+        $action = $data['scan_action'] ?? 'lookup';
         $medicine = Medicine::query()
             ->where('barcode', $searchTerm)
             ->orWhere('medicine_code', $searchTerm)
@@ -72,23 +73,17 @@ class SearchController extends Controller
                 ->first(fn (Medicine $candidate): bool => $candidate->scannableBarcodeValue() === $searchTerm);
         }
 
-        $action = $data['scan_action'] ?? 'lookup';
-
         if (! $medicine) {
-            if ($action === 'new_medicine' && ! $request->user()?->hasPermission('stock.receive')) {
-                return back()
-                    ->withInput()
-                    ->withErrors(['barcode' => 'You do not have permission to receive stock for a new medicine.']);
+            if ($action === 'new_medicine') {
+                abort_unless($request->user()?->hasPermission('medicines.create') && $request->user()?->hasPermission('stock.receive'), 403);
+
+                return redirect()->route('scanner.register', ['barcode' => $searchTerm])
+                    ->with('info', "No medicine found for barcode: {$searchTerm}. Please register the medicine.");
             }
 
-            if (! auth()->user()?->hasPermission('medicines.create')) {
-                return back()
-                    ->withInput()
-                    ->withErrors(['barcode' => "No medicine matches barcode or medicine ID: {$searchTerm}. You do not have permission to register new medicines."]);
-            }
-
-            return redirect()->route('scanner.register', ['barcode' => $searchTerm])
-                ->with('info', "No medicine found for barcode: {$searchTerm}. Please register the medicine.");
+            return back()
+                ->withInput()
+                ->withErrors(['barcode' => "No medicine matches barcode or medicine ID: {$searchTerm}. Choose Stock in new medicine only if you intend to register it."]);
         }
 
         if ($action === 'new_medicine') {
@@ -151,8 +146,6 @@ class SearchController extends Controller
             'minimum_stock_level' => ['nullable', 'integer', 'min:0'],
             'description' => ['nullable', 'string'],
         ]);
-
-        $data['storage_location_id'] = $this->registrationStorageLocationId();
 
         $data['maximum_stock_level'] = max(100, (int) ($data['minimum_stock_level'] ?? 10));
 
@@ -282,39 +275,20 @@ class SearchController extends Controller
     /** @param array<string, mixed> $data */
     private function receiveScannedStock(Medicine $medicine, array $data, User $user, string $remarks): void
     {
+        $receivedAt = isset($data['arrival_date']) && $data['arrival_date']
+            ? Carbon::parse($data['arrival_date'])->setTime(now()->hour, now()->minute, now()->second)->toDateTimeString()
+            : now()->toDateTimeString();
+
         $this->inventoryService->stockIn([
             'medicine_id' => $medicine->id,
             'supplier_id' => $data['supplier_id'],
-            'storage_location_id' => $data['storage_location_id'],
             'batch_number' => 'SCAN-'.Str::upper((string) Str::ulid()),
             'lot_number' => null,
             'quantity' => $data['quantity'],
             'unit_cost' => $data['unit_cost'] ?? 0,
             'expiration_date' => $data['expiration_date'],
-            'received_at' => $data['arrival_date'],
-            'reference_number' => 'SCANNER-'.Str::upper((string) Str::ulid()),
+            'received_at' => $receivedAt,
             'remarks' => $remarks,
         ], $user);
-    }
-
-    private function registrationStorageLocationId(): int
-    {
-        $location = StorageLocation::query()
-            ->where('is_active', true)
-            ->orderBy('name')
-            ->first();
-
-        if ($location) {
-            return $location->id;
-        }
-
-        return StorageLocation::query()->firstOrCreate(
-            ['code' => 'DEFAULT'],
-            [
-                'name' => 'Default storage',
-                'description' => 'Created automatically for scanner medicine registrations.',
-                'is_active' => true,
-            ],
-        )->id;
     }
 }

@@ -26,11 +26,35 @@ class InventoryService
     public function stockIn(array $data, User $user): InventoryTransaction
     {
         return DB::transaction(function () use ($data, $user): InventoryTransaction {
-            $batch = MedicineBatch::query()
-                ->where('medicine_id', $data['medicine_id'])
-                ->where('batch_number', $data['batch_number'])
-                ->lockForUpdate()
-                ->first();
+            $batch = null;
+
+            if (filled($data['medicine_batch_id'] ?? null)) {
+                $batch = MedicineBatch::query()->lockForUpdate()->findOrFail($data['medicine_batch_id']);
+
+                if ((int) $batch->medicine_id !== (int) $data['medicine_id']) {
+                    throw ValidationException::withMessages([
+                        'medicine_batch_id' => 'Choose a batch that belongs to the selected medicine.',
+                    ]);
+                }
+
+                if ($batch->status !== 'active' || $batch->expiration_date->isBefore(today())) {
+                    throw ValidationException::withMessages([
+                        'medicine_batch_id' => 'Only active, unexpired batches can be restocked.',
+                    ]);
+                }
+
+                $data['batch_number'] = $batch->batch_number;
+                $data['lot_number'] = $batch->lot_number;
+                $data['supplier_id'] = $batch->supplier_id;
+                $data['expiration_date'] = $batch->expiration_date->toDateString();
+                $data['unit_cost'] = filled($data['unit_cost'] ?? null) ? $data['unit_cost'] : $batch->unit_cost;
+            } else {
+                $batch = MedicineBatch::query()
+                    ->where('medicine_id', $data['medicine_id'])
+                    ->where('batch_number', $data['batch_number'])
+                    ->lockForUpdate()
+                    ->first();
+            }
 
             if ($batch && ! $batch->expiration_date->isSameDay($data['expiration_date'])) {
                 throw ValidationException::withMessages([
@@ -44,17 +68,15 @@ class InventoryService
                 ]);
             }
 
-            if ($batch && ((int) $batch->supplier_id !== (int) $data['supplier_id']
-                || (int) $batch->storage_location_id !== (int) $data['storage_location_id'])) {
+            if ($batch && (int) $batch->supplier_id !== (int) $data['supplier_id']) {
                 throw ValidationException::withMessages([
-                    'batch_number' => 'This batch is already recorded under a different supplier or storage location. Use the original receipt details or create a stock transfer first.',
+                    'batch_number' => 'This batch is already recorded under a different supplier. Use the original receipt details.',
                 ]);
             }
 
             $batch ??= MedicineBatch::query()->create([
                 'medicine_id' => $data['medicine_id'],
                 'supplier_id' => $data['supplier_id'],
-                'storage_location_id' => $data['storage_location_id'],
                 'batch_number' => $data['batch_number'],
                 'lot_number' => $data['lot_number'] ?? null,
                 'manufacturing_date' => $data['manufacturing_date'] ?? null,
@@ -76,7 +98,6 @@ class InventoryService
 
             $transaction = $this->createTransaction($batch, $user, TransactionType::StockIn, $data['quantity'], $previousStock, [
                 'transacted_at' => $data['received_at'],
-                'reference_number' => $data['reference_number'] ?? null,
                 'remarks' => $data['remarks'] ?? null,
                 'metadata' => $data['metadata'] ?? null,
             ]);
@@ -249,7 +270,6 @@ class InventoryService
             'recipient' => $details['recipient'] ?? null,
             'purpose' => $details['purpose'] ?? null,
             'transacted_at' => $details['transacted_at'] ?? now(),
-            'reference_number' => $details['reference_number'] ?? null,
             'reason' => $details['reason'] ?? null,
             'remarks' => $details['remarks'] ?? null,
             'metadata' => $details['metadata'] ?? null,

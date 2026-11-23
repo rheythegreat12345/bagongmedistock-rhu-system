@@ -32,7 +32,7 @@ class AppServiceProvider extends ServiceProvider
 
         View::composer('*', function ($view): void {
             $systemSettings = Schema::hasTable('settings')
-                ? Setting::query()->pluck('value', 'key')
+                ? Setting::query()->where('key', '!=', 'medicine_edit_pin')->pluck('value', 'key')
                 : collect();
 
             $view->with('systemSettings', $systemSettings);

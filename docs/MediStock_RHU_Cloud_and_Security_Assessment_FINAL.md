@@ -30,7 +30,7 @@ The recommended deployment model is **Public Cloud**, not Hybrid Cloud. RHU work
 |---|---|
 | Application | **Verified current implementation:** Laravel 12 web application with PHP 8.2. |
 | Database | **Verified current implementation:** MySQL is used by the local development configuration. |
-| Core records | Medicines, medicine batches, suppliers, storage locations, inventory transactions, notifications, audit logs, users, roles, and permissions. |
+| Core records | Medicines, medicine batches, suppliers, inventory transactions, notifications, audit logs, users, roles, and permissions. |
 | Main workflows | Receive stock, FEFO release/dispensing, stock adjustment, medicine management, barcode lookup, reports, expiration monitoring, and low-stock monitoring. |
 | Current hosting | **Verified current implementation:** local development configuration. No cloud deployment files or infrastructure-as-code were found. |
 | Scanner support | **Verified current implementation:** barcode lookup accepts barcode or internal medicine code; the scanner page supports keyboard-style USB scanner input and browser WebUSB-related behavior. A barcode rendering dependency is listed in `package.json`, but the reviewed scanner page also contains custom JavaScript barcode rendering. |

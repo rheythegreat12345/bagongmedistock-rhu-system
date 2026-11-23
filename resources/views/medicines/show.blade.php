@@ -5,7 +5,7 @@
     <button class="btn btn-secondary" type="button" onclick="window.print()"><x-icon name="report" class="icon-sm" /> Print label</button>
     @if(auth()->user()->hasPermission('stock.release'))<a class="btn btn-secondary" href="{{ route('stock.out',['medicine'=>$medicine->id]) }}"><x-icon name="stock-out" class="icon-sm" /> Dispense</a>@endif
     @if(auth()->user()->hasPermission('stock.receive'))<a class="btn btn-primary" href="{{ route('stock.in',['medicine'=>$medicine->id]) }}"><x-icon name="stock-in" class="icon-sm" /> Restock</a>@endif
-    @if(auth()->user()->hasPermission('medicines.edit'))<a class="btn btn-secondary" href="{{ route('medicines.edit',$medicine) }}"><x-icon name="edit" class="icon-sm" /> Edit</a>@endif
+    @if(auth()->user()->hasPermission('medicines.edit'))<a class="btn btn-gold" href="{{ route('medicines.edit',$medicine) }}"><x-icon name="edit" class="icon-sm" /> Edit</a>@endif
 </div></div>
 
 <div class="stats-grid" style="grid-template-columns:repeat(4,minmax(0,1fr))">
@@ -21,7 +21,7 @@
             ['data' => $movement->pluck('total'), 'color' => '#0d9488'],
         ]];
     @endphp
-    <div class="tabs" data-tabs><button class="tab active" data-tab="overview">Overview</button><button class="tab" data-tab="batches">Batches ({{ $medicine->batches->count() }})</button><button class="tab" data-tab="transactions">Transactions</button><button class="tab" data-tab="history">Audit history</button></div>
+    <div class="tabs" data-tabs><button class="tab active" data-tab="overview">Overview</button><button class="tab tab-batches" data-tab="batches">Batches ({{ $medicine->batches->count() }})</button><button class="tab" data-tab="transactions">Transactions</button><button class="tab" data-tab="history">Audit history</button></div>
     <div class="tab-panel active" data-tab-panel="overview">
         <div class="grid grid-2" style="grid-template-columns:1.3fr .7fr">
             <div><h2 class="card-title" style="padding:0 16px 8px">Medicine profile</h2><dl class="details-grid">
@@ -29,19 +29,35 @@
                 <div class="detail"><dt>Generic name</dt><dd>{{ $medicine->generic_name }}</dd></div><div class="detail"><dt>Brand name</dt><dd>{{ $medicine->brand_name ?: '—' }}</dd></div><div class="detail"><dt>Strength</dt><dd>{{ $medicine->strength ?: '—' }}</dd></div>
                 <div class="detail"><dt>Dosage form</dt><dd>{{ $medicine->dosage_form }}</dd></div><div class="detail"><dt>Dosage reference</dt><dd>{{ $medicine->dosage ?: '—' }}</dd></div><div class="detail"><dt>Inventory unit</dt><dd>{{ $medicine->unit }}</dd></div>
                 <div class="detail"><dt>Default cost</dt><dd>₱{{ number_format((float)$medicine->unit_cost,2) }}</dd></div><div class="detail"><dt>Reference price</dt><dd>{{ $medicine->reference_price ? '₱'.number_format((float)$medicine->reference_price,2) : '—' }}</dd></div><div class="detail"><dt>Last updated</dt><dd>{{ $medicine->updated_at->format('M d, Y g:i A') }}</dd></div>
-                <div class="detail span-2" style="grid-column:span 3"><dt>Storage condition</dt><dd>{{ $medicine->storage_condition ?: 'No special condition recorded' }}</dd></div>
                 <div class="detail" style="grid-column:span 3"><dt>Description</dt><dd>{{ $medicine->description ?: 'No description recorded.' }}</dd></div>
             </dl></div>
-            <div><div class="card" style="box-shadow:none"><div class="card-header"><div><h3 class="card-title">Barcode / scan code</h3><p class="card-subtitle">This barcode can be scanned from this screen or a printed label.</p></div></div><div class="card-body" style="text-align:center"><svg id="medicine-barcode-svg" data-barcode-preview data-barcode-value="{{ $medicine->scannableBarcodeValue() }}" data-barcode-hint="medicine-barcode-hint" role="img" aria-label="Medicine barcode" preserveAspectRatio="none" shape-rendering="crispEdges" style="display:block;width:100%;height:96px;background:#fff;border:1px solid var(--border);border-radius:6px"></svg><div class="mono" style="font-size:15px;letter-spacing:.15em;margin-top:10px">{{ $medicine->scannableBarcodeValue() }}</div><p id="medicine-barcode-hint" class="card-subtitle" style="margin:8px 0 0">Preparing barcode...</p></div></div>
+            <div><div class="card" style="box-shadow:none"><div class="card-header"><div><h3 class="card-title">Barcode</h3><p class="card-subtitle">This barcode can be scanned from this screen or a printed label.</p></div></div><div class="card-body" style="text-align:center"><svg id="medicine-barcode-svg" data-barcode-preview data-barcode-value="{{ $medicine->scannableBarcodeValue() }}" data-barcode-hint="medicine-barcode-hint" role="img" aria-label="Medicine barcode" preserveAspectRatio="none" shape-rendering="crispEdges" style="display:block;width:100%;height:96px;background:#fff;border:1px solid var(--border);border-radius:6px"></svg><div class="mono" style="font-size:15px;letter-spacing:.15em;margin-top:10px">{{ $medicine->scannableBarcodeValue() }}</div><p id="medicine-barcode-hint" class="card-subtitle" style="margin:8px 0 0">Preparing barcode...</p></div></div>
             <div class="card" style="box-shadow:none;margin-top:15px"><div class="card-header"><h3 class="card-title">30-day movement</h3></div><div class="card-body"><div class="chart-wrap small"><canvas class="chart" data-chart='{{ json_encode($medicineMovementChart) }}'></canvas></div></div></div></div>
         </div>
     </div>
-    <div class="tab-panel" data-tab-panel="batches"><div class="table-wrap"><table class="data-table"><thead><tr><th>Batch / lot</th><th>Supplier</th><th>Location</th><th>Quantity</th><th>Received</th><th>Expiration</th><th>Status</th></tr></thead><tbody>
-        @forelse($medicine->batches as $batch)<tr><td><span class="table-primary mono">{{ $batch->batch_number }}</span><span class="table-secondary">{{ $batch->lot_number ?: 'No lot number' }}</span></td><td>{{ $batch->supplier?->name ?? '—' }}</td><td>{{ $batch->storageLocation->name }}</td><td><strong>{{ number_format($batch->quantity) }}</strong> {{ $medicine->unit }}<span class="table-secondary">₱{{ number_format((float)$batch->unit_cost,2) }} each</span></td><td>{{ $batch->received_at?->format('M d, Y') ?? '—' }}</td><td>{{ $batch->expiration_date->format('M d, Y') }}<span class="table-secondary">{{ $batch->expiration_date->diffForHumans() }}</span></td><td><x-status-badge :status="$batch->expirationStatus()" /></td></tr>
-        @empty<tr><td colspan="7"><div class="empty-state"><span class="empty-icon"><x-icon name="boxes" /></span><h3>No batches yet</h3><p>Receive stock to create the first batch for this medicine.</p></div></td></tr>@endforelse
+    <div class="tab-panel" data-tab-panel="batches"><div class="table-wrap"><table class="data-table"><thead><tr><th>Batch / lot</th><th>Supplier</th><th>Quantity</th><th>Received</th><th>Expiration</th><th>Status</th>
+        @if(auth()->user()->hasPermission('medicines.edit'))
+            <th>Actions</th>
+        @endif
+    </tr></thead><tbody>
+        @forelse($medicine->batches as $batch)
+            <tr>
+                <td><span class="table-primary mono">{{ $batch->batch_number }}</span><span class="table-secondary">{{ $batch->lot_number ?: 'No lot number' }}</span></td>
+                <td>{{ $batch->supplier?->name ?? '—' }}</td>
+                <td><strong>{{ number_format($batch->quantity) }}</strong> {{ $medicine->unit }}<span class="table-secondary">₱{{ number_format((float)$batch->unit_cost,2) }} each</span></td>
+                <td>{{ $batch->received_at?->format('M d, Y') ?? '—' }}</td>
+                <td>{{ $batch->expiration_date->format('M d, Y') }}<span class="table-secondary">{{ $batch->expiration_date->diffForHumans() }}</span></td>
+                <td><x-status-badge :status="$batch->expirationStatus()" /></td>
+                @if(auth()->user()->hasPermission('medicines.edit'))
+                    <td><a class="btn btn-batch-gold btn-sm" href="{{ route('medicines.batches.expiration.edit', [$medicine, $batch]) }}">Edit batch</a></td>
+                @endif
+            </tr>
+        @empty
+            <tr><td colspan="{{ auth()->user()->hasPermission('medicines.edit') ? 7 : 6 }}"><div class="empty-state"><span class="empty-icon"><x-icon name="boxes" /></span><h3>No batches yet</h3><p>Receive stock to create the first batch for this medicine.</p></div></td></tr>
+        @endforelse
     </tbody></table></div></div>
-    <div class="tab-panel" data-tab-panel="transactions"><div class="table-wrap"><table class="data-table"><thead><tr><th>ID</th><th>Batch</th><th>Type</th><th>Quantity</th><th>Previous → New</th><th>User</th><th>Date</th></tr></thead><tbody>
-        @forelse($medicine->transactions as $transaction)<tr><td class="mono">{{ $transaction->transaction_code }}</td><td>{{ $transaction->batch?->batch_number ?? '—' }}</td><td><span class="badge badge-info">{{ $transaction->type->label() }}</span></td><td>{{ $transaction->quantity }} {{ $medicine->unit }}</td><td>{{ $transaction->previous_stock }} → {{ $transaction->new_stock }}</td><td>{{ $transaction->user?->name ?? 'System' }}</td><td>{{ $transaction->transacted_at->format('M d, Y g:i A') }}</td></tr>@empty<tr><td colspan="7"><div class="empty-state"><p>No transactions yet.</p></div></td></tr>@endforelse
+    <div class="tab-panel" data-tab-panel="transactions"><div class="table-wrap"><table class="data-table"><thead><tr><th>ID</th><th>Batch</th><th>Type</th><th>Quantity</th><th>Previous → New</th><th>Processed by</th><th>Recipient</th><th>Date</th></tr></thead><tbody>
+        @forelse($medicine->transactions as $transaction)<tr><td class="mono">{{ $transaction->transaction_code }}</td><td>{{ $transaction->batch?->batch_number ?? '—' }}</td><td><span class="badge badge-info">{{ $transaction->type->label() }}</span></td><td>{{ $transaction->quantity }} {{ $medicine->unit }}</td><td>{{ $transaction->previous_stock }} → {{ $transaction->new_stock }}</td><td>{{ $transaction->user?->name ?? 'System' }}</td><td>{{ $transaction->recipient ?: '—' }}</td><td>{{ $transaction->transacted_at->format('M d, Y g:i A') }}</td></tr>@empty<tr><td colspan="8"><div class="empty-state"><p>No transactions yet.</p></div></td></tr>@endforelse
     </tbody></table></div></div>
     <div class="tab-panel" data-tab-panel="history"><div class="timeline">@forelse($audits as $audit)<div class="timeline-item"><span class="timeline-dot"></span><strong>{{ str($audit->action)->replace('_',' ')->headline() }}</strong><p>{{ $audit->description }}</p><time>{{ $audit->created_at->format('M d, Y g:i A') }} · {{ $audit->user?->name ?? 'System' }} · {{ $audit->ip_address ?: 'No IP' }}</time></div>@empty<div class="empty-state"><p>No audit entries for this medicine.</p></div>@endforelse</div></div>
 </section>

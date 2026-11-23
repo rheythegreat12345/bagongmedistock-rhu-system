@@ -4,7 +4,6 @@ namespace Database\Factories;
 
 use App\Models\Medicine;
 use App\Models\MedicineBatch;
-use App\Models\StorageLocation;
 use App\Models\Supplier;
 use Illuminate\Database\Eloquent\Factories\Factory;
 
@@ -23,7 +22,6 @@ class MedicineBatchFactory extends Factory
         return [
             'medicine_id' => Medicine::factory(),
             'supplier_id' => Supplier::factory(),
-            'storage_location_id' => StorageLocation::factory(),
             'batch_number' => fake()->unique()->bothify('B-####-??'),
             'lot_number' => fake()->bothify('LOT-#####'),
             'manufacturing_date' => now()->subYear(),

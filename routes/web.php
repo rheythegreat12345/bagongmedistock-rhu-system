@@ -25,7 +25,7 @@ Route::get('/', fn () => auth()->check() ? to_route('dashboard') : to_route('log
 
 Route::middleware('guest')->group(function (): void {
     Route::get('/login', [AuthController::class, 'create'])->name('login');
-    Route::post('/login', [AuthController::class, 'store'])->middleware('throttle:6,1')->name('login.store');
+    Route::post('/login', [AuthController::class, 'store'])->name('login.store');
     Route::get('/forgot-password', [PasswordResetController::class, 'request'])->name('password.request');
     Route::post('/forgot-password', [PasswordResetController::class, 'email'])->middleware('throttle:3,1')->name('password.email');
     Route::get('/reset-password/{token}', [PasswordResetController::class, 'reset'])->name('password.reset');
@@ -77,6 +77,8 @@ Route::middleware(['auth', 'cache.headers:private;no_cache;no_store;must_revalid
     });
     Route::middleware('permission:medicines.edit')->group(function (): void {
         Route::delete('/medicines/bulk', [MedicineController::class, 'bulkArchive'])->name('medicines.bulk-archive');
+        Route::get('/medicines/{medicine}/batches/{batch}/expiration/edit', [MedicineController::class, 'editBatchExpiration'])->name('medicines.batches.expiration.edit');
+        Route::patch('/medicines/{medicine}/batches/{batch}/expiration', [MedicineController::class, 'updateBatchExpiration'])->name('medicines.batches.expiration');
         Route::get('/medicines/{medicine}/edit', [MedicineController::class, 'edit'])->name('medicines.edit');
         Route::patch('/medicines/{medicineId}/restore', [MedicineController::class, 'restore'])->name('medicines.restore');
         Route::put('/medicines/{medicine}', [MedicineController::class, 'update'])->name('medicines.update');

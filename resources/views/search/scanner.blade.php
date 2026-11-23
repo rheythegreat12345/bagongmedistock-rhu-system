@@ -75,7 +75,6 @@
                 <button class="btn btn-secondary btn-sm" id="detect-usb-scanner" type="button" hidden>Detect USB scanner</button>
             </div>
 
-            <div class="alert alert-success" style="margin-top:20px;box-shadow:none"><x-icon name="check" /><span><strong>Scanner-ready mode.</strong><br>Most USB scanners act like a keyboard. Scan a barcode with an Enter or Tab suffix, or let the automatic scan timeout submit it. USB plug-in and plug-out messages require a supported browser and a one-time device selection.</span></div>
         </div>
     </section>
 </div>
@@ -326,6 +325,20 @@ const initializeScanner = () => {
         }
 
         const now = performance.now();
+
+        if (event.key === 'Enter' && event.target === input) {
+            event.preventDefault();
+            clearTimeout(scannerTimer);
+            scannerBuffer = '';
+
+            if (input.value.trim().length >= minimumScannerLength) {
+                submitHardwareScan(input.value);
+            } else {
+                form.requestSubmit();
+            }
+
+            return;
+        }
 
         if (event.key === 'Enter' || event.key === 'Tab') {
             if (scannerBuffer.length >= minimumScannerLength && now - lastScannerKeyAt <= scanMaximumGap + 100) {

@@ -9,14 +9,18 @@ use App\Services\OtpService;
 use Database\Seeders\DemoAccountSeeder;
 use Database\Seeders\RoleSeeder;
 use Database\Seeders\SettingSeeder;
+use Illuminate\Session\TokenMismatchException;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Password;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
 use Laravel\Socialite\Facades\Socialite;
 
 test('an active user can sign in and sign out', function () {
     $user = userWithPermissions(['medicines.view']);
+    Carbon::setTestNow(Carbon::parse('2026-10-06 11:16:00', 'Asia/Manila'));
 
     expect($user->getRawOriginal('password'))->toBe('password');
 
@@ -25,9 +29,19 @@ test('an active user can sign in and sign out', function () {
 
     $this->assertAuthenticatedAs($user);
     expect($user->fresh()->last_login_at)->not->toBeNull();
-    expect(AuditLog::query()->where('action', 'login')->where('user_id', $user->id)->exists())->toBeTrue();
+    $loginAudit = AuditLog::query()->where('action', 'login')->where('user_id', $user->id)->firstOrFail();
+
+    expect(config('app.timezone'))->toBe('Asia/Manila')
+        ->and($loginAudit->created_at->format('Y-m-d g:i:s A'))->toBe('2026-10-06 11:16:00 AM')
+        ->and($loginAudit->new_values)->toBe(['login_time' => 'Oct 06, 2026 11:16:00 AM PHT']);
 
     $this->post(route('logout'))->assertRedirect(route('login'));
+    $logoutAudit = AuditLog::query()->where('action', 'logout')->where('user_id', $user->id)->firstOrFail();
+
+    expect($logoutAudit->new_values)->toBe(['logout_time' => 'Oct 06, 2026 11:16:00 AM PHT']);
+
+    Carbon::setTestNow();
+
     $this->assertGuest();
 });
 
@@ -55,6 +69,34 @@ test('login validation does not reveal whether an account exists', function () {
         ->assertSessionHasErrors(['email' => 'The email, password, or account status is invalid.']);
 
     expect(User::query()->count())->toBe(0);
+});
+
+test('login locks after five failed attempts for five minutes', function () {
+    $user = userWithPermissions();
+
+    foreach (range(1, 5) as $attempt) {
+        $this->post(route('login.store'), [
+            'email' => $user->email,
+            'password' => 'incorrect-password',
+        ])->assertSessionHasErrors('email');
+    }
+
+    $this->post(route('login.store'), [
+        'email' => $user->email,
+        'password' => 'incorrect-password',
+    ])->assertSessionHasErrors([
+        'email' => 'Too many login attempts. Please try again in 5 minute(s).',
+    ]);
+});
+
+test('a session token mismatch redirects to sign in with a recovery message', function () {
+    Route::post('/test/session-expired', function () {
+        throw new TokenMismatchException('CSRF token mismatch.');
+    })->middleware('web');
+
+    $this->post('/test/session-expired')
+        ->assertRedirect(route('login'))
+        ->assertSessionHas('error', 'Your session expired. Please sign in again.');
 });
 
 test('login normalizes the email address before authentication', function () {

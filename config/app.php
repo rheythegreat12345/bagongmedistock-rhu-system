@@ -65,7 +65,7 @@ return [
     |
     */
 
-    'timezone' => 'UTC',
+    'timezone' => env('APP_TIMEZONE', 'Asia/Manila'),
 
     /*
     |--------------------------------------------------------------------------
@@ -98,6 +98,8 @@ return [
     'cipher' => 'AES-256-CBC',
 
     'key' => env('APP_KEY'),
+
+    'seed_password' => env('RHU_SEED_PASSWORD'),
 
     'previous_keys' => [
         ...array_filter(

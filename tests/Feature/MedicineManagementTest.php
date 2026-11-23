@@ -1,11 +1,21 @@
 <?php
 
+use App\Models\AuditLog;
+use App\Models\InventoryTransaction;
 use App\Models\Medicine;
+use App\Models\MedicineBatch;
 use App\Models\MedicineCategory;
+use App\Models\Permission;
+use App\Models\Role;
+use App\Models\Setting;
+use App\Models\User;
+use App\TransactionType;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Hash;
 
 test('authorized staff can create and update a medicine', function () {
     $user = userWithPermissions(['medicines.create', 'medicines.edit', 'medicines.view']);
+    Setting::factory()->create(['key' => 'medicine_edit_pin', 'value' => Hash::make('2468'), 'type' => 'secret', 'group' => 'security']);
     $category = MedicineCategory::factory()->create();
     $data = [
         'medicine_category_id' => $category->id,
@@ -31,12 +41,151 @@ test('authorized staff can create and update a medicine', function () {
     $this->actingAs($user)->post(route('medicines.store'), $data)->assertRedirect();
     $medicine = Medicine::query()->where('medicine_code', 'MED-TEST-1')->firstOrFail();
 
-    $this->actingAs($user)->put(route('medicines.update', $medicine), [...$data, 'generic_name' => 'Updated Medicine'])
+    $this->actingAs($user)->get(route('medicines.edit', $medicine))
+        ->assertOk()
+        ->assertSee('<form class="global-search" role="search" autocomplete="off" data-live-search-form>', false)
+        ->assertSee('name="medicine_search" type="search" autocomplete="off"', false)
+        ->assertSee('<option value="Tablets" selected>Tablets</option>', false)
+        ->assertSee('Authorization Required')
+        ->assertSee('Authorization PIN')
+        ->assertSee('id="saveButton" class="btn btn-primary" type="button"', false);
+
+    $this->actingAs($user)->put(route('medicines.update', $medicine), [...$data, 'generic_name' => 'Updated Medicine', 'authorization_pin' => '2468'])
         ->assertRedirect(route('medicines.show', $medicine));
 
     expect($medicine->fresh()->generic_name)->toBe('Updated Medicine')
         ->and($medicine->fresh()->box_size)->toBe(100);
     $this->assertDatabaseHas('audit_logs', ['action' => 'medicine_updated', 'auditable_id' => $medicine->id]);
+    $audit = AuditLog::query()->where('action', 'medicine_updated')->where('auditable_id', $medicine->id)->firstOrFail();
+
+    expect($audit->old_values)->toBe(['generic_name' => 'Test Medicine'])
+        ->and($audit->new_values)->toBe(['generic_name' => 'Updated Medicine']);
+});
+
+test('medicine update preserves every field when no value was changed', function () {
+    $user = userWithPermissions(['medicines.edit']);
+    Setting::factory()->create([
+        'key' => 'medicine_edit_pin',
+        'value' => Hash::make('2468'),
+        'type' => 'secret',
+        'group' => 'security',
+    ]);
+    $medicine = Medicine::factory()->create([
+        'minimum_stock_level' => 10,
+        'maximum_stock_level' => 25,
+        'reorder_level' => 20,
+        'updated_at' => now()->subDay(),
+    ]);
+    $originalUpdatedAt = $medicine->updated_at->toDateTimeString();
+    $fields = [
+        'medicine_category_id', 'medicine_code', 'barcode', 'generic_name', 'brand_name', 'dosage',
+        'strength', 'dosage_form', 'unit', 'box_size', 'minimum_stock_level', 'maximum_stock_level',
+        'reorder_level', 'unit_cost', 'reference_price', 'storage_condition', 'description', 'status',
+    ];
+
+    $this->actingAs($user)
+        ->put(route('medicines.update', $medicine), [...$medicine->only($fields), 'authorization_pin' => '2468'])
+        ->assertRedirect(route('medicines.show', $medicine))
+        ->assertSessionHas('success', 'No medicine changes were made.');
+
+    expect($medicine->fresh()->maximum_stock_level)->toBe(25)
+        ->and($medicine->fresh()->updated_at->toDateTimeString())->toBe($originalUpdatedAt);
+    $this->assertDatabaseMissing('audit_logs', ['action' => 'medicine_updated', 'auditable_id' => $medicine->id]);
+});
+
+test('medicine updates reject missing and incorrect PINs without saving changes', function () {
+    $user = userWithPermissions(['medicines.edit']);
+    Setting::factory()->create([
+        'key' => 'medicine_edit_pin',
+        'value' => Hash::make('2468'),
+        'type' => 'secret',
+        'group' => 'security',
+    ]);
+    $medicine = Medicine::factory()->create(['generic_name' => 'Original Medicine']);
+    $fields = [
+        'medicine_category_id', 'medicine_code', 'barcode', 'generic_name', 'brand_name', 'dosage',
+        'strength', 'dosage_form', 'unit', 'box_size', 'minimum_stock_level', 'maximum_stock_level',
+        'reorder_level', 'unit_cost', 'reference_price', 'storage_condition', 'description', 'status',
+    ];
+
+    foreach ([null, '0000'] as $pin) {
+        $payload = [...$medicine->only($fields), 'generic_name' => 'Unauthorized update'];
+
+        if ($pin !== null) {
+            $payload['authorization_pin'] = $pin;
+        }
+
+        $this->actingAs($user)
+            ->from(route('medicines.edit', $medicine))
+            ->put(route('medicines.update', $medicine), $payload)
+            ->assertRedirect(route('medicines.edit', $medicine))
+            ->assertSessionHasErrors('authorization_pin')
+            ->assertSessionMissing('_old_input.authorization_pin');
+    }
+
+    expect($medicine->fresh()->generic_name)->toBe('Original Medicine');
+    $this->assertDatabaseMissing('audit_logs', ['action' => 'medicine_updated', 'auditable_id' => $medicine->id]);
+});
+
+test('medicine edits remain blocked until an administrator configures the shared PIN', function () {
+    $user = userWithPermissions(['medicines.edit']);
+    $medicine = Medicine::factory()->create(['generic_name' => 'Original Medicine']);
+    $fields = [
+        'medicine_category_id', 'medicine_code', 'barcode', 'generic_name', 'brand_name', 'dosage',
+        'strength', 'dosage_form', 'unit', 'box_size', 'minimum_stock_level', 'maximum_stock_level',
+        'reorder_level', 'unit_cost', 'reference_price', 'storage_condition', 'description', 'status',
+    ];
+
+    $this->actingAs($user)
+        ->from(route('medicines.edit', $medicine))
+        ->put(route('medicines.update', $medicine), [
+            ...$medicine->only($fields),
+            'generic_name' => 'Unauthorized update',
+            'authorization_pin' => '2468',
+        ])
+        ->assertRedirect(route('medicines.edit', $medicine))
+        ->assertSessionHasErrors('authorization_pin');
+
+    expect($medicine->fresh()->generic_name)->toBe('Original Medicine');
+});
+
+test('authorized administrators and pharmacists can edit medicines with the shared PIN', function () {
+    $administratorRole = Role::factory()->create(['slug' => 'administrator', 'is_active' => true]);
+    $administrator = User::factory()->create(['role_id' => $administratorRole->id]);
+    $medicineEditPermission = Permission::factory()->create(['slug' => 'medicines.edit']);
+    $pharmacistRole = Role::factory()->create(['slug' => 'pharmacist', 'is_active' => true]);
+    $pharmacistRole->permissions()->attach($medicineEditPermission);
+    $pharmacist = User::factory()->create(['role_id' => $pharmacistRole->id]);
+    $medicine = Medicine::factory()->create();
+    Setting::factory()->create([
+        'key' => 'medicine_edit_pin',
+        'value' => Hash::make('2468'),
+        'type' => 'secret',
+        'group' => 'security',
+    ]);
+    $fields = [
+        'medicine_category_id', 'medicine_code', 'barcode', 'generic_name', 'brand_name', 'dosage',
+        'strength', 'dosage_form', 'unit', 'box_size', 'minimum_stock_level', 'maximum_stock_level',
+        'reorder_level', 'unit_cost', 'reference_price', 'storage_condition', 'description', 'status',
+    ];
+
+    $this->actingAs($administrator)
+        ->put(route('medicines.update', $medicine), [
+            ...$medicine->only($fields),
+            'generic_name' => 'Updated by administrator',
+            'authorization_pin' => '2468',
+        ])
+        ->assertRedirect(route('medicines.show', $medicine));
+
+    $this->actingAs($pharmacist)
+        ->put(route('medicines.update', $medicine), [
+            ...$medicine->fresh()->only($fields),
+            'generic_name' => 'Updated by pharmacist',
+            'authorization_pin' => '2468',
+        ])
+        ->assertRedirect(route('medicines.show', $medicine));
+
+    expect($medicine->fresh()->generic_name)->toBe('Updated by pharmacist');
 });
 
 test('duplicate medicine identifiers are rejected', function () {
@@ -98,6 +247,17 @@ test('authorized staff can archive selected medicines together', function () {
     });
 });
 
+test('medicine list keeps the view action neutral and highlights the edit action in gold', function () {
+    $user = userWithPermissions(['medicines.view', 'medicines.edit']);
+    $medicine = Medicine::factory()->create();
+
+    $this->actingAs($user)
+        ->get(route('medicines.index'))
+        ->assertOk()
+        ->assertSee('class="btn btn-secondary btn-icon"', false)
+        ->assertSee('class="btn btn-edit-icon btn-icon" href="'.route('medicines.edit', $medicine).'" title="Edit"', false);
+});
+
 test('authorized staff can view archived medicines', function () {
     $user = userWithPermissions(['medicines.view']);
     $archivedMedicine = Medicine::factory()->create(['generic_name' => 'Archived Medicine']);
@@ -150,7 +310,10 @@ test('authorized staff can restore an archived medicine to active inventory', fu
 
 test('a medicine page shows a scan-ready barcode preview', function () {
     $user = userWithPermissions(['medicines.view', 'stock.receive']);
-    $medicine = Medicine::factory()->create(['barcode' => '4801000000009']);
+    $medicine = Medicine::factory()->create([
+        'barcode' => '4801000000009',
+        'storage_condition' => 'Store below 30 degrees in a dry place.',
+    ]);
 
     $this->actingAs($user)
         ->get(route('medicines.show', $medicine))
@@ -158,9 +321,49 @@ test('a medicine page shows a scan-ready barcode preview', function () {
         ->assertSee('id="medicine-barcode-svg"', false)
         ->assertSee('data-barcode-preview', false)
         ->assertSee('data-barcode-value="4801000000009"', false)
+        ->assertSee('Barcode')
+        ->assertDontSee('Scan code')
         ->assertSee('This barcode can be scanned from this screen or a printed label.')
         ->assertSee('Restock')
+        ->assertDontSee('Storage condition')
+        ->assertDontSee('Store below 30 degrees in a dry place.')
         ->assertDontSee('Receive batch');
+});
+
+test('a medicine page shows who dispensed medicine and its recipient', function () {
+    $user = userWithPermissions(['medicines.view']);
+    $medicine = Medicine::factory()->create();
+
+    InventoryTransaction::factory()->create([
+        'medicine_id' => $medicine->id,
+        'medicine_batch_id' => null,
+        'user_id' => $user->id,
+        'type' => TransactionType::Dispensed,
+        'recipient' => 'Maria Santos',
+    ]);
+
+    $this->actingAs($user)
+        ->get(route('medicines.show', $medicine))
+        ->assertOk()
+        ->assertSee('Processed by')
+        ->assertSee('Recipient')
+        ->assertSee($user->name)
+        ->assertSee('Maria Santos');
+});
+
+test('medicine batch tables display no storage-location data', function () {
+    $user = userWithPermissions(['medicines.view', 'medicines.edit']);
+    $medicine = Medicine::factory()->create();
+
+    MedicineBatch::factory()->create([
+        'medicine_id' => $medicine->id,
+    ]);
+
+    $this->actingAs($user)
+        ->get(route('medicines.show', $medicine))
+        ->assertOk()
+        ->assertDontSee('>Location<', false)
+        ->assertDontSee('Storage location');
 });
 
 test('an invalid numeric demo barcode displays as a valid scan-safe EAN-13 value without changing storage', function () {

@@ -17,7 +17,7 @@
             ['Low Stock',$statistics['low_stock'],'alert','amber',route('inventory.low-stock'),'Needs replenishment'],
             ['Out of Stock',$statistics['out_of_stock'],'stock-out','red',route('medicines.index',['stock_status'=>'out']),'Unavailable medicines'],
             ['Expiring Soon',$statistics['expiring_soon'],'calendar','amber',route('inventory.expirations',['status'=>'90']),'Within 90 days'],
-            ['Expired Batches',$statistics['expired'],'alert','red',route('inventory.expirations',['status'=>'expired']),'Dispensing blocked'],
+            ['Expired Batches',$statistics['expired'],'alert','amber',route('inventory.expirations',['status'=>'expired']),'Dispensing blocked'],
             ["Today's Activity",$statistics['today_transactions'],'transaction','purple',route('transactions.index',['date_from'=>today()->toDateString()]),'Transactions recorded'],
             ['Dispensed Today',$statistics['dispensed_today'],'stock-out','teal',route('transactions.index',['type'=>'dispensed','date_from'=>today()->toDateString()]),'Units released'],
             ['Received Today',$statistics['received_today'],'stock-in','',route('transactions.index',['type'=>'stock_in','date_from'=>today()->toDateString()]),'Units received'],
@@ -68,7 +68,7 @@
                     @if(auth()->user()->hasPermission('stock.receive'))<a class="quick-action" href="{{ route('stock.in') }}"><span class="quick-action-icon"><x-icon name="stock-in" /></span><span class="quick-action-copy"><strong>Stock in</strong><span>Receive a batch</span></span><x-icon name="chevron" class="quick-action-chevron icon-sm" /></a>@endif
                     @if(auth()->user()->hasPermission('stock.release'))<a class="quick-action" href="{{ route('stock.out') }}"><span class="quick-action-icon"><x-icon name="stock-out" /></span><span class="quick-action-copy"><strong>Dispense</strong><span>FEFO release</span></span><x-icon name="chevron" class="quick-action-chevron icon-sm" /></a>@endif
                     @if(auth()->user()->hasPermission('medicines.create'))<a class="quick-action" href="{{ route('medicines.create') }}"><span class="quick-action-icon"><x-icon name="plus" /></span><span class="quick-action-copy"><strong>Medicine</strong><span>Add a record</span></span><x-icon name="chevron" class="quick-action-chevron icon-sm" /></a>@endif
-                    @if(auth()->user()->hasPermission('stock.receive'))<a class="quick-action" href="{{ route('scanner') }}"><span class="quick-action-icon"><x-icon name="scan" /></span><span class="quick-action-copy"><strong>Scan code</strong><span>Find medicine</span></span><x-icon name="chevron" class="quick-action-chevron icon-sm" /></a>@endif
+                    @if(auth()->user()->hasPermission('stock.receive'))<a class="quick-action" href="{{ route('scanner') }}"><span class="quick-action-icon"><x-icon name="scan" /></span><span class="quick-action-copy"><strong>Scan barcode</strong><span>Find medicine</span></span><x-icon name="chevron" class="quick-action-chevron icon-sm" /></a>@endif
                 </div>
             </div>
             <aside class="dashboard-expiring-panel" aria-labelledby="expiring-next-title">

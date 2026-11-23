@@ -5,7 +5,6 @@ namespace App\Http\Controllers;
 use App\AdjustmentReason;
 use App\Models\Medicine;
 use App\Models\MedicineBatch;
-use App\Models\StorageLocation;
 use App\Models\Supplier;
 use App\Services\InventoryService;
 use App\TransactionType;
@@ -27,39 +26,37 @@ class InventoryController extends Controller
         return view('inventory.stock-in', [
             'medicines' => Medicine::query()->where('status', 'active')->orderBy('generic_name')->get(),
             'suppliers' => Supplier::query()->where('is_active', true)->orderBy('name')->get(),
+            'batches' => MedicineBatch::query()
+                ->with(['medicine', 'supplier'])
+                ->whereHas('medicine', fn ($query) => $query->where('status', 'active'))
+                ->where('status', 'active')
+                ->whereDate('expiration_date', '>=', today())
+                ->orderBy('expiration_date')
+                ->orderBy('received_at')
+                ->get(),
             'restockMedicine' => $request->boolean('restock') ? $selectedMedicine : null,
         ]);
     }
 
     public function storeStockIn(Request $request, InventoryService $inventoryService): RedirectResponse
     {
+        $selectedBatch = $request->filled('medicine_batch_id');
+
         $data = $request->validate([
             'medicine_id' => ['required', 'exists:medicines,id'],
-            'supplier_id' => ['required', 'exists:suppliers,id'],
-            'storage_location_id' => ['nullable', 'exists:storage_locations,id'],
-            'batch_number' => ['required', 'string', 'max:80'],
+            'medicine_batch_id' => ['nullable', 'integer', 'exists:medicine_batches,id'],
+            'supplier_id' => [$selectedBatch ? 'nullable' : 'required', 'exists:suppliers,id'],
+            'batch_number' => [$selectedBatch ? 'nullable' : 'required', 'string', 'max:80'],
             'lot_number' => ['nullable', 'string', 'max:80'],
             'quantity' => ['required', 'integer', 'min:1'],
             'quantity_unit' => ['nullable', Rule::in(['unit', 'box'])],
-            'unit_cost' => ['required', 'numeric', 'min:0'],
+            'unit_cost' => [$selectedBatch ? 'nullable' : 'required', 'numeric', 'min:0'],
             'manufacturing_date' => ['nullable', 'date', 'before:expiration_date'],
-            'expiration_date' => ['required', 'date', 'after_or_equal:today'],
+            'expiration_date' => [$selectedBatch ? 'nullable' : 'required', 'date', 'after_or_equal:today'],
             'received_at' => ['nullable', 'date', 'before_or_equal:today'],
-            'reference_number' => ['nullable', 'string', 'max:255'],
             'remarks' => ['nullable', 'string', 'max:2000'],
         ]);
-        $data['received_at'] ??= today()->toDateString();
-        $data['storage_location_id'] ??= StorageLocation::query()
-            ->where('is_active', true)
-            ->orderBy('name')
-            ->value('id');
-
-        if ($data['storage_location_id'] === null) {
-            throw ValidationException::withMessages([
-                'storage_location_id' => 'Add an active storage location before receiving stock.',
-            ]);
-        }
-
+        $data['received_at'] ??= now()->toDateTimeString();
         $medicine = Medicine::query()->findOrFail($data['medicine_id']);
         $enteredQuantity = (int) $data['quantity'];
         $quantityUnit = $data['quantity_unit'] ?? 'unit';
@@ -75,7 +72,7 @@ class InventoryController extends Controller
     {
         return view('inventory.stock-out', [
             'medicines' => Medicine::query()->where('status', 'active')->withInventory()->orderBy('generic_name')->get(),
-            'batches' => MedicineBatch::query()->with(['medicine', 'storageLocation'])->availableFefo()->get(),
+            'batches' => MedicineBatch::query()->with('medicine')->availableFefo()->get(),
             'selectedMedicine' => $request->integer('medicine'),
         ]);
     }
@@ -88,10 +85,9 @@ class InventoryController extends Controller
             'quantity' => ['required', 'integer', 'min:1'],
             'quantity_unit' => ['nullable', Rule::in(['unit', 'box'])],
             'type' => ['required', Rule::in([TransactionType::StockOut->value, TransactionType::Dispensed->value])],
-            'recipient' => ['required_if:type,dispensed', 'nullable', 'string', 'max:255'],
+            'recipient' => ['required', 'string', 'max:255'],
             'purpose' => ['required', 'string', 'max:255'],
             'transacted_at' => ['nullable', 'date', 'before_or_equal:now'],
-            'reference_number' => ['nullable', 'string', 'max:255'],
             'remarks' => ['nullable', 'string', 'max:2000'],
         ]);
         $data['transacted_at'] ??= now()->toDateTimeString();
@@ -110,7 +106,7 @@ class InventoryController extends Controller
     public function adjustment(): View
     {
         return view('inventory.adjustment', [
-            'batches' => MedicineBatch::query()->with(['medicine', 'storageLocation'])->where('quantity', '>', 0)->orderBy('expiration_date')->get(),
+            'batches' => MedicineBatch::query()->with('medicine')->whereHas('medicine')->where('quantity', '>', 0)->orderBy('expiration_date')->get(),
             'reasons' => AdjustmentReason::cases(),
         ]);
     }
@@ -161,7 +157,7 @@ class InventoryController extends Controller
     {
         $status = $request->string('status')->toString();
         $search = trim($request->string('search')->toString());
-        $batches = MedicineBatch::query()->with(['medicine', 'supplier', 'storageLocation'])->whereHas('medicine', fn ($medicineQuery) => $medicineQuery->where('status', 'active'))->where('quantity', '>', 0)
+        $batches = MedicineBatch::query()->with(['medicine', 'supplier'])->whereHas('medicine', fn ($medicineQuery) => $medicineQuery->where('status', 'active'))->where('quantity', '>', 0)
             ->when($search !== '', function ($query) use ($search): void {
                 $query->where(function ($batchQuery) use ($search): void {
                     $batchQuery->where('batch_number', 'like', "%{$search}%")
@@ -171,8 +167,7 @@ class InventoryController extends Controller
                                 ->orWhere('brand_name', 'like', "%{$search}%")
                                 ->orWhere('medicine_code', 'like', "%{$search}%");
                         })
-                        ->orWhereHas('supplier', fn ($supplierQuery) => $supplierQuery->where('name', 'like', "%{$search}%"))
-                        ->orWhereHas('storageLocation', fn ($locationQuery) => $locationQuery->where('name', 'like', "%{$search}%"));
+                        ->orWhereHas('supplier', fn ($supplierQuery) => $supplierQuery->where('name', 'like', "%{$search}%"));
                 });
             })
             ->when($status === 'expired', fn ($query) => $query->whereDate('expiration_date', '<', today()))

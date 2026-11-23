@@ -7,7 +7,7 @@
     <div class="field"><label for="brand_name">Brand name</label><input class="input" id="brand_name" name="brand_name" value="{{ old('brand_name',$medicine->brand_name) }}"></div>
     <div class="field"><label class="required" for="medicine_category_id">Category</label><select class="select" id="medicine_category_id" name="medicine_category_id" required><option value="">Choose category</option>@foreach($categories as $category)<option value="{{ $category->id }}" @selected((string)old('medicine_category_id',$medicine->medicine_category_id)===(string)$category->id)>{{ $category->name }}</option>@endforeach</select></div>
     <div class="field"><label for="strength">Strength</label><input class="input" id="strength" name="strength" value="{{ old('strength',$medicine->strength) }}" placeholder="e.g. 500 mg"></div>
-    <div class="field"><label class="required" for="unit">Inventory unit</label><select class="select" id="unit" name="unit" required><option value="">Choose unit</option>@foreach(['Tablets','Capsules','Bottles','Vials','Ampoules','Sachets','Tubes','Drops','Inhalers','Boxes'] as $unit)<option value="{{ $unit }}" @selected(old('unit',$medicine->unit)===$unit)>{{ $unit }}</option>@endforeach</select></div>
+    <div class="field"><label class="required" for="unit">Inventory unit</label><select class="select" id="unit" name="unit" required><option value="">Choose unit</option>@foreach(['Tablets','Capsules','Bottles','Vials','Ampoules','Sachets','Tubes','Drops','Inhalers','Boxes'] as $unit)<option value="{{ $unit }}" @selected(strcasecmp((string) old('unit', $medicine->unit), $unit) === 0)>{{ $unit }}</option>@endforeach</select></div>
     <div class="field"><label for="box_size">Units per box</label><input class="input" id="box_size" name="box_size" type="number" min="1" value="{{ old('box_size',$medicine->unitsPerBox()) }}" placeholder="e.g. 100"><p class="help-text">Required only when this medicine will be received, dispensed, or adjusted by box. Use the actual number on the package.</p></div>
     <div class="field"><label class="required" for="status">Record status</label><select class="select" id="status" name="status" required><option value="active" @selected(old('status',$medicine->status)==='active')>Active</option><option value="inactive" @selected(old('status',$medicine->status)==='inactive')>Inactive</option></select></div>
 </div></div></div>
@@ -20,78 +20,86 @@
     <div class="field"><label class="required" for="unit_cost">Default unit cost (₱)</label><input class="input" id="unit_cost" name="unit_cost" type="number" min="0" step="0.01" value="{{ old('unit_cost',$medicine->unit_cost) }}" required></div>
     <div class="field"><label for="reference_price">Reference price (₱)</label><input class="input" id="reference_price" name="reference_price" type="number" min="0" step="0.01" value="{{ old('reference_price',$medicine->reference_price) }}"></div>
 </div></div></div></div>
-<div class="card" style="margin-top:18px"><div class="card-header"><h2 class="card-title">Description</h2></div><div class="card-body"><div class="field"><label for="description">Medicine notes</label><textarea class="textarea" id="description" name="description">{{ old('description',$medicine->description) }}</textarea></div><div class="form-actions"><a class="btn btn-secondary" href="{{ $editing ? route('medicines.show',$medicine) : route('medicines.index') }}">Cancel</a><button id="saveButton" class="btn btn-primary" type="button"><x-icon name="check" class="icon-sm" /> {{ $editing ? 'Save changes' : 'Add medicine' }}</button></div></div></div>
+<div class="card" style="margin-top:18px"><div class="card-header"><h2 class="card-title">Description</h2></div><div class="card-body"><div class="field"><label for="description">Medicine notes</label><textarea class="textarea" id="description" name="description">{{ old('description',$medicine->description) }}</textarea></div><div class="form-actions"><a class="btn btn-secondary" href="{{ $editing ? route('medicines.show',$medicine) : route('medicines.index') }}">Cancel</a><button id="saveButton" class="btn btn-primary" type="{{ $editing ? 'button' : 'submit' }}"><x-icon name="check" class="icon-sm" /> {{ $editing ? 'Save changes' : 'Add medicine' }}</button></div></div></div>
 </form>
 
 @if($editing)
-<div id="pinModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center;">
-    <div style="background:white;padding:24px;border-radius:8px;max-width:400px;width:90%;box-shadow:0 4px 6px rgba(0,0,0,0.1);">
-        <h3 style="margin:0 0 16px 0;font-size:18px;">Authorization Required</h3>
-        <p style="margin:0 0 16px 0;color:#666;">Enter the four-digit PIN configured by an administrator to save your changes.</p>
-        <div class="field" style="margin-bottom:16px;">
-            <label class="required" for="modal_authorization_pin">Authorization PIN</label>
-            <input class="input" id="modal_authorization_pin" type="password" inputmode="numeric" pattern="[0-9]{4}" minlength="4" maxlength="4" autocomplete="off" placeholder="••••" style="width:100%;">
-            <p id="pinError" style="color:#dc2626;font-size:14px;margin-top:4px;display:none;">@error('authorization_pin'){{ $message }}@enderror</p>
-        </div>
-        <div style="display:flex;gap:8px;justify-content:flex-end;">
-            <button id="cancelPinButton" class="btn btn-secondary" type="button">Cancel</button>
-            <button id="confirmPinButton" class="btn btn-primary" type="button">Confirm</button>
+<dialog id="medicine-pin-dialog" aria-labelledby="medicine-pin-title" aria-describedby="medicine-pin-description">
+    <div class="dialog-body">
+        <h3 id="medicine-pin-title">Authorization Required</h3>
+        <p id="medicine-pin-description">Enter the four-digit shared PIN to save your medicine changes.</p>
+        <div class="field" style="margin-top:16px">
+            <label class="required" for="medicine-authorization-pin">Authorization PIN</label>
+            <input class="input" id="medicine-authorization-pin" type="password" inputmode="numeric" pattern="[0-9]{4}" minlength="4" maxlength="4" autocomplete="off" placeholder="••••" aria-describedby="medicine-pin-error">
+            <p id="medicine-pin-error" class="error-text" role="alert" @if(! $errors->has('authorization_pin')) hidden @endif>@error('authorization_pin'){{ $message }}@enderror</p>
         </div>
     </div>
-</div>
-
+    <div class="dialog-actions">
+        <button id="cancel-medicine-pin" class="btn btn-secondary" type="button">Cancel</button>
+        <button id="confirm-medicine-pin" class="btn btn-primary" type="button">Confirm</button>
+    </div>
+</dialog>
+@push('scripts')
 <script>
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', function () {
+    const form = document.getElementById('medicineForm');
     const saveButton = document.getElementById('saveButton');
-    const pinModal = document.getElementById('pinModal');
-    const cancelPinButton = document.getElementById('cancelPinButton');
-    const confirmPinButton = document.getElementById('confirmPinButton');
-    const modalPinInput = document.getElementById('modal_authorization_pin');
-    const pinError = document.getElementById('pinError');
-    const medicineForm = document.getElementById('medicineForm');
+    const pinDialog = document.getElementById('medicine-pin-dialog');
+    const pinInput = document.getElementById('medicine-authorization-pin');
+    const pinError = document.getElementById('medicine-pin-error');
+    const confirmButton = document.getElementById('confirm-medicine-pin');
 
-    saveButton.addEventListener('click', function(e) {
-        e.preventDefault();
-        pinModal.style.display = 'flex';
-        modalPinInput.value = '';
-        pinError.style.display = 'none';
-        modalPinInput.focus();
-    });
-
-    cancelPinButton.addEventListener('click', function() {
-        pinModal.style.display = 'none';
-    });
-
-    confirmPinButton.addEventListener('click', function() {
-        const pinValue = modalPinInput.value;
-        if (pinValue.length !== 4 || !/^\d+$/.test(pinValue)) {
-            pinError.textContent = 'The authorization PIN must be 4 digits.';
-            pinError.style.display = 'block';
+    saveButton.addEventListener('click', function () {
+        if (!form.reportValidity()) {
             return;
         }
 
-        const pinInput = document.createElement('input');
-        pinInput.type = 'hidden';
-        pinInput.name = 'authorization_pin';
-        pinInput.value = pinValue;
-        medicineForm.appendChild(pinInput);
-
-        pinModal.style.display = 'none';
-        medicineForm.submit();
+        pinInput.value = '';
+        pinError.hidden = true;
+        pinDialog.showModal();
+        pinInput.focus();
     });
 
-    modalPinInput.addEventListener('keypress', function(e) {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            confirmPinButton.click();
+    document.getElementById('cancel-medicine-pin').addEventListener('click', function () {
+        pinDialog.close();
+    });
+
+    confirmButton.addEventListener('click', function () {
+        const pin = pinInput.value;
+
+        if (!/^\d{4}$/.test(pin)) {
+            pinError.textContent = 'The authorization PIN must be 4 digits.';
+            pinError.hidden = false;
+            pinInput.focus();
+            return;
+        }
+
+        let hiddenPin = form.querySelector('input[name="authorization_pin"]');
+
+        if (!hiddenPin) {
+            hiddenPin = document.createElement('input');
+            hiddenPin.type = 'hidden';
+            hiddenPin.name = 'authorization_pin';
+            form.appendChild(hiddenPin);
+        }
+
+        hiddenPin.value = pin;
+        pinDialog.close();
+        form.requestSubmit();
+    });
+
+    pinInput.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            confirmButton.click();
         }
     });
 
-    pinModal.addEventListener('click', function(e) {
-        if (e.target === pinModal) {
-            pinModal.style.display = 'none';
-        }
-    });
+    @if($errors->has('authorization_pin'))
+        pinDialog.showModal();
+        pinInput.focus();
+    @endif
 });
 </script>
+@endpush
 @endif

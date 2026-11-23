@@ -184,8 +184,8 @@ class ReportController extends Controller
 
         return [
             'title' => self::TYPES[$type],
-            'headings' => ['Transaction ID', 'Date', 'Medicine', 'Batch', 'Type', 'Quantity', 'Previous', 'New', 'User', 'Reference', 'Reason'],
-            'rows' => $transactions->map(fn (InventoryTransaction $transaction) => [$transaction->transaction_code, $transaction->transacted_at->format('Y-m-d H:i'), $transaction->medicine->generic_name, $transaction->batch?->batch_number ?? '—', $transaction->type->label(), $transaction->quantity, $transaction->previous_stock, $transaction->new_stock, $transaction->user?->name ?? 'System', $transaction->reference_number, $transaction->reason])->values(),
+            'headings' => ['Transaction ID', 'Date', 'Medicine', 'Batch', 'Type', 'Quantity', 'Previous', 'New', 'Processed by', 'Recipient', 'Reference', 'Reason'],
+            'rows' => $transactions->map(fn (InventoryTransaction $transaction) => [$transaction->transaction_code, $transaction->transacted_at->format('Y-m-d H:i'), $transaction->medicine->generic_name, $transaction->batch?->batch_number ?? '—', $transaction->type->label(), $transaction->quantity, $transaction->previous_stock, $transaction->new_stock, $transaction->user?->name ?? 'System', $transaction->recipient, $transaction->reference_number, $transaction->reason])->values(),
             'summary' => $transactions->count().' transactions · '.number_format($transactions->sum('quantity')).' units moved',
         ];
     }

@@ -30,11 +30,88 @@
     <div class="table-wrap"><table class="data-table"><thead><tr>@if($canArchiveMedicines)<th class="medicine-selection-cell medicine-selection-column"><input class="medicine-selection-checkbox" type="checkbox" data-medicine-selection-all aria-label="Select all medicine records on this page"></th>@endif<th>Medicine</th><th>Category</th><th>Form & strength</th><th>Current stock</th><th>{{ $showArchived ? 'Archived' : 'Level' }}</th><th>Value</th><th>Updated</th><th class="text-right">Actions</th></tr></thead><tbody>
     @forelse($medicines as $medicine)
         @if($showArchived)<tr><td><span class="table-primary">{{ $medicine->generic_name }}</span><span class="table-secondary">{{ $medicine->brand_name ?: 'Generic' }} ({{ $medicine->medicine_code }})</span></td><td>{{ $medicine->category->name }}</td><td>{{ $medicine->dosage_form }}<span class="table-secondary">{{ $medicine->strength ?: 'Not specified' }}</span></td><td><strong>{{ number_format($medicine->current_stock ?? 0) }}</strong> {{ $medicine->unit }}<span class="table-secondary">{{ number_format($medicine->usable_stock ?? 0) }} usable</span></td><td><span class="badge badge-warning">{{ $medicine->deleted_at?->format('M d, Y') }}</span></td><td>&#8369;{{ number_format(($medicine->current_stock ?? 0) * (float) $medicine->unit_cost, 2) }}</td><td>{{ $medicine->updated_at->format('M d, Y') }}</td><td><div class="table-actions"><form method="POST" action="{{ route('medicines.restore', $medicine->id) }}" data-confirm="Restore {{ $medicine->generic_name }} to active inventory?">@csrf @method('PATCH')<button class="btn btn-secondary btn-sm" type="submit"><x-icon name="check" class="icon-sm" /> Restore</button></form></div></td></tr>@else
-        <tr>@if($canArchiveMedicines)<td class="medicine-selection-cell medicine-selection-column"><input class="medicine-selection-checkbox" type="checkbox" name="medicine_ids[]" value="{{ $medicine->id }}" data-medicine-selection-item aria-label="Select {{ $medicine->generic_name }}"></td>@endif<td><a class="table-primary" href="{{ route('medicines.show', $medicine) }}">{{ $medicine->generic_name }}</a><span class="table-secondary">{{ $medicine->brand_name ?: 'Generic' }} &middot; <span class="mono">{{ $medicine->medicine_code }}</span></span></td><td>{{ $medicine->category->name }}</td><td>{{ $medicine->dosage_form }}<span class="table-secondary">{{ $medicine->strength ?: '—' }}</span></td><td><strong>{{ number_format($medicine->current_stock ?? 0) }}</strong> {{ $medicine->unit }}<span class="table-secondary">{{ number_format($medicine->usable_stock ?? 0) }} usable</span></td><td><x-status-badge :status="$medicine->stockStatus()" /></td><td>&#8369;{{ number_format(($medicine->current_stock ?? 0) * (float) $medicine->unit_cost, 2) }}</td><td>{{ $medicine->updated_at->format('M d, Y') }}</td><td><div class="table-actions"><a class="btn btn-secondary btn-icon" href="{{ route('medicines.show', $medicine) }}" title="View"><x-icon name="eye" class="icon-sm" /></a>@if($canArchiveMedicines)<a class="btn btn-secondary btn-icon" href="{{ route('medicines.edit', $medicine) }}" title="Edit"><x-icon name="edit" class="icon-sm" /></a>@endif</div></td></tr>
+        <tr class="clickable-row" onclick="window.location.href='{{ route('medicines.show', $medicine) }}'">
+            @if($canArchiveMedicines)
+                <td class="medicine-selection-cell medicine-selection-column" onclick="event.stopPropagation()"><input class="medicine-selection-checkbox" type="checkbox" name="medicine_ids[]" value="{{ $medicine->id }}" data-medicine-selection-item aria-label="Select {{ $medicine->generic_name }}"></td>
+            @endif
+            <td>
+                <a class="table-primary" href="{{ route('medicines.show', $medicine) }}" onclick="event.stopPropagation()">{{ $medicine->generic_name }}</a>
+                <span class="table-secondary">{{ $medicine->brand_name ?: 'Generic' }} &middot; <span class="mono">{{ $medicine->medicine_code }}</span></span>
+                <button class="medicine-batches-toggle" type="button" data-medicine-batch-toggle aria-controls="medicine-batches-{{ $medicine->id }}" aria-expanded="false" onclick="event.stopPropagation()">
+                    <x-icon name="chevron" class="icon-sm" />
+                    <span>Batches ({{ $medicine->batches->count() }})</span>
+                </button>
+            </td>
+            <td>{{ $medicine->category->name }}</td>
+            <td>{{ $medicine->dosage_form }}<span class="table-secondary">{{ $medicine->strength ?: '—' }}</span></td>
+            <td><strong>{{ number_format($medicine->current_stock ?? 0) }}</strong> {{ $medicine->unit }}<span class="table-secondary">{{ number_format($medicine->usable_stock ?? 0) }} usable</span></td>
+            <td><x-status-badge :status="$medicine->stockStatus()" /></td>
+            <td>&#8369;{{ number_format(($medicine->current_stock ?? 0) * (float) $medicine->unit_cost, 2) }}</td>
+            <td>{{ $medicine->updated_at->format('M d, Y') }}</td>
+            <td onclick="event.stopPropagation()"><div class="table-actions"><a class="btn btn-secondary btn-icon" href="{{ route('medicines.show', $medicine) }}" title="View"><x-icon name="eye" class="icon-sm" /></a>@if($canArchiveMedicines)<a class="btn btn-edit-icon btn-icon" href="{{ route('medicines.edit', $medicine) }}" title="Edit"><x-icon name="edit" class="icon-sm" /></a>@endif</div></td>
+        </tr>
+        <tr id="medicine-batches-{{ $medicine->id }}" class="medicine-batches-panel" hidden>
+            <td colspan="{{ $canArchiveMedicines ? 9 : 8 }}">
+                <div class="medicine-batches-content">
+                    <div class="medicine-batches-heading">
+                        <div>
+                            <strong>{{ $medicine->generic_name }} batches</strong>
+                            <span class="table-secondary">Select Manage to review or correct a specific batch.</span>
+                        </div>
+                    </div>
+                    @if($medicine->batches->isNotEmpty())
+                        <div class="table-wrap">
+                            <table class="data-table medicine-batches-table">
+                                <thead>
+                                    <tr>
+                                        <th>Batch / lot</th>
+                                        <th>Supplier</th>
+                                        <th>Quantity</th>
+                                        <th>Received</th>
+                                        <th>Expiration</th>
+                                        <th>Status</th>
+                                        @if($canArchiveMedicines)<th>Actions</th>@endif
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach($medicine->batches as $batch)
+                                        <tr>
+                                            <td><span class="table-primary mono">{{ $batch->batch_number }}</span><span class="table-secondary">{{ $batch->lot_number ?: 'No lot number' }}</span></td>
+                                            <td>{{ $batch->supplier?->name ?? '—' }}</td>
+                                            <td><strong>{{ number_format($batch->quantity) }}</strong> {{ $medicine->unit }}</td>
+                                            <td>{{ $batch->received_at?->format('M d, Y') ?? '—' }}</td>
+                                            <td>{{ $batch->expiration_date->format('M d, Y') }}</td>
+                                            <td><x-status-badge :status="$batch->expirationStatus()" /></td>
+                                            @if($canArchiveMedicines)
+                                                <td><a class="btn btn-secondary btn-sm" href="{{ route('medicines.batches.expiration.edit', [$medicine, $batch]) }}">Manage</a></td>
+                                            @endif
+                                        </tr>
+                                    @endforeach
+                                </tbody>
+                            </table>
+                        </div>
+                    @else
+                        <p class="medicine-batches-empty">No batches have been recorded for this medicine yet.</p>
+                    @endif
+                </div>
+            </td>
+        </tr>
         @endif
     @empty<tr><td colspan="{{ $canArchiveMedicines ? 9 : 8 }}"><div class="empty-state"><span class="empty-icon"><x-icon name="medicine" class="icon-lg" /></span><h3>No medicines found</h3><p>Try clearing the filters or add the first medicine record.</p>@if(auth()->user()->hasPermission('medicines.create'))<a class="btn btn-primary" href="{{ route('medicines.create') }}">Add medicine</a>@endif</div></td></tr>@endforelse
     </tbody></table></div>
     @if($canArchiveMedicines)</form>@endif
     <x-pagination :paginator="$medicines" />
 </section>
+
+@push('styles')
+<style>
+.clickable-row {
+    cursor: pointer;
+    transition: background-color 0.12s;
+}
+.clickable-row:hover {
+    background-color: var(--card-muted);
+}
+</style>
+@endpush
 @endsection

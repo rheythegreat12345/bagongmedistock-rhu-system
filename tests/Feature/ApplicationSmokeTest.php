@@ -3,9 +3,9 @@
 use App\Models\InventoryTransaction;
 use App\Models\Medicine;
 use App\Models\MedicineBatch;
-use App\Models\StorageLocation;
 use App\Models\Supplier;
 use App\Models\User;
+use App\TransactionType;
 use Database\Seeders\DatabaseSeeder;
 use Illuminate\Support\Facades\Schema;
 
@@ -81,7 +81,6 @@ test('the dashboard treats expired stock as unavailable', function () {
     MedicineBatch::factory()->create([
         'medicine_id' => $medicine->id,
         'supplier_id' => Supplier::factory(),
-        'storage_location_id' => StorageLocation::factory(),
         'quantity' => 500,
         'expiration_date' => today()->subDay(),
     ]);
@@ -109,13 +108,40 @@ test('the dashboard renders transactions whose medicine is no longer available',
         ->assertSee('Unavailable medicine');
 });
 
+test('inventory pages handle records whose medicine is no longer available', function () {
+    $user = userWithPermissions(['stock.adjust', 'transactions.view', 'analytics.view']);
+    $medicine = Medicine::factory()->create(['generic_name' => 'Archived Inventory Medicine']);
+    $batch = MedicineBatch::factory()->create(['medicine_id' => $medicine->id]);
+    $transaction = InventoryTransaction::factory()->create([
+        'medicine_id' => $medicine->id,
+        'medicine_batch_id' => $batch->id,
+        'type' => TransactionType::Dispensed,
+    ]);
+
+    $medicine->delete();
+
+    $this->actingAs($user)
+        ->get(route('stock.adjustment'))
+        ->assertOk()
+        ->assertDontSee($batch->batch_number);
+
+    $this->actingAs($user)
+        ->get(route('transactions.index'))
+        ->assertOk()
+        ->assertSee($transaction->transaction_code)
+        ->assertSee('Unavailable medicine');
+
+    $this->actingAs($user)
+        ->get(route('analytics'))
+        ->assertOk();
+});
+
 test('the dashboard and expiration monitor exclude archived medicines', function () {
     $user = userWithPermissions(['medicines.view']);
     $medicine = Medicine::factory()->create(['generic_name' => 'Archived Dashboard Medicine']);
     MedicineBatch::factory()->create([
         'medicine_id' => $medicine->id,
         'supplier_id' => Supplier::factory(),
-        'storage_location_id' => StorageLocation::factory(),
         'quantity' => 50,
         'expiration_date' => today()->addWeek(),
     ]);

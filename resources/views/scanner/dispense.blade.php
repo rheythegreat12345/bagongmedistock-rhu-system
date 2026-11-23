@@ -33,7 +33,7 @@
                 </div>
                 <div class="field">
                     <label class="required" for="recipient">Patient name or recipient</label>
-                    <input class="input" id="recipient" name="recipient" value="{{ old('recipient') }}" required placeholder="Enter patient name or department">
+                    <input class="input{{ $errors->has('recipient') ? ' input-error' : '' }}" id="recipient" name="recipient" value="{{ old('recipient') }}" required placeholder="Enter patient name or department">
                     <div class="help-text">Required so this dispensing can be traced safely.</div>
                     @error('recipient')<div class="error-text">{{ $message }}</div>@enderror
                 </div>
@@ -90,4 +90,29 @@
         </div>
     </div>
 </form>
+
+@push('scripts')
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const form = document.querySelector('form');
+    const recipientInput = document.getElementById('recipient');
+
+    form.addEventListener('submit', function (e) {
+        if (!recipientInput.value.trim()) {
+            e.preventDefault();
+            recipientInput.classList.add('input-error');
+            recipientInput.focus();
+        } else {
+            recipientInput.classList.remove('input-error');
+        }
+    });
+
+    recipientInput.addEventListener('input', function () {
+        if (this.value.trim()) {
+            this.classList.remove('input-error');
+        }
+    });
+});
+</script>
+@endpush
 @endsection

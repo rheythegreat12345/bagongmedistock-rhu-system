@@ -117,6 +117,22 @@ const initializeMedicineBulkSelection = (scope = document) => {
     });
 };
 
+const initializeMedicineBatchDropdowns = (scope = document) => {
+    scope.querySelectorAll('[data-medicine-batch-toggle]').forEach((button) => {
+        if (button.dataset.batchDropdownInitialized === 'true') return;
+
+        const panel = document.getElementById(button.getAttribute('aria-controls'));
+        if (!panel) return;
+
+        button.addEventListener('click', () => {
+            const isExpanded = button.getAttribute('aria-expanded') === 'true';
+            button.setAttribute('aria-expanded', isExpanded ? 'false' : 'true');
+            panel.hidden = isExpanded;
+        });
+        button.dataset.batchDropdownInitialized = 'true';
+    });
+};
+
 const initializeDispenseRecipientFields = (scope = document) => {
     scope.querySelectorAll('[data-dispense-type]').forEach((select) => {
         if (select.dataset.recipientInitialized === 'true') return;
@@ -281,6 +297,56 @@ const initializeAutoSubmitFilters = (scope = document) => {
     });
 };
 
+const initializeStockInBatchSelection = (scope = document) => {
+    scope.querySelectorAll('[data-stock-in-batch]').forEach((batchSelect) => {
+        if (batchSelect.dataset.batchSelectionInitialized === 'true') return;
+
+        const form = batchSelect.form;
+        const medicineSelect = form?.querySelector(batchSelect.dataset.medicineTarget);
+        const batchNumberInput = form?.querySelector(batchSelect.dataset.batchNumberTarget);
+        const newBatchField = batchNumberInput?.closest('[data-new-batch-field]');
+        const supplierSelect = form?.querySelector(batchSelect.dataset.supplierTarget);
+        const expirationInput = form?.querySelector(batchSelect.dataset.expirationTarget);
+        const unitCostInput = form?.querySelector(batchSelect.dataset.unitCostTarget);
+        if (!medicineSelect || !batchNumberInput || !newBatchField || !supplierSelect || !expirationInput || !unitCostInput) return;
+
+        const updateSelection = (clearDetails = false) => {
+            [...batchSelect.options].forEach((option) => {
+                option.hidden = option.value !== '' && option.dataset.medicine !== medicineSelect.value;
+            });
+
+            if (batchSelect.selectedOptions[0]?.hidden) {
+                batchSelect.value = '';
+            }
+
+            const selectedBatch = batchSelect.selectedOptions[0];
+            const hasExistingBatch = Boolean(batchSelect.value);
+            newBatchField.hidden = hasExistingBatch;
+            batchNumberInput.required = !hasExistingBatch;
+            supplierSelect.required = !hasExistingBatch;
+            batchNumberInput.value = hasExistingBatch ? selectedBatch.dataset.batchNumber : '';
+
+            if (hasExistingBatch) {
+                supplierSelect.value = selectedBatch.dataset.supplier || '';
+                expirationInput.value = selectedBatch.dataset.expiration;
+                unitCostInput.value = selectedBatch.dataset.unitCost;
+            } else if (clearDetails) {
+                supplierSelect.value = '';
+                expirationInput.value = '';
+                unitCostInput.value = '';
+            }
+        };
+
+        batchSelect.addEventListener('change', () => updateSelection(true));
+        medicineSelect.addEventListener('change', () => {
+            batchSelect.value = '';
+            updateSelection(true);
+        });
+        batchSelect.dataset.batchSelectionInitialized = 'true';
+        updateSelection();
+    });
+};
+
 const initializePageContent = (scope) => {
     updateTimeGreetings(scope);
     scope.querySelectorAll('[data-barcode-preview]').forEach((svg) => {
@@ -311,9 +377,11 @@ const initializePageContent = (scope) => {
     });
     initializeAutoSubmitFilters(scope);
     initializeMedicineBulkSelection(scope);
+    initializeMedicineBatchDropdowns(scope);
     initializeDispenseRecipientFields(scope);
     initializeBoxReleaseAvailability(scope);
     initializeBoxReceiptReminder(scope);
+    initializeStockInBatchSelection(scope);
     renderCharts(scope);
 };
 
@@ -503,12 +571,15 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     initializeAutoSubmitFilters();
     initializeMedicineBulkSelection();
+    initializeMedicineBatchDropdowns();
     initializeDispenseRecipientFields();
     initializeBoxReleaseAvailability();
     initializeBoxReceiptReminder();
+    initializeStockInBatchSelection();
 
     const liveSearch = document.querySelector('[data-live-global-search]');
     const liveSearchResults = document.querySelector('[data-live-search-results]');
+    document.querySelector('[data-live-search-form]')?.addEventListener('submit', (event) => event.preventDefault());
     let liveSearchTimer;
     let liveSearchRequest;
     let activeSearchResult = -1;

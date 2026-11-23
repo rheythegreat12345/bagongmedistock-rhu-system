@@ -3,8 +3,8 @@
 use App\Models\Medicine;
 use App\Models\MedicineBatch;
 use App\Models\MedicineCategory;
-use App\Models\StorageLocation;
 use App\Models\Supplier;
+use Illuminate\Support\Facades\Schema;
 
 test('a barcode lookup redirects to the matching medicine without changing its record', function () {
     $user = userWithPermissions(['stock.receive']);
@@ -18,6 +18,30 @@ test('a barcode lookup redirects to the matching medicine without changing its r
         ->assertRedirect(route('medicines.show', $medicine));
 
     expect($medicine->fresh()->only(['id', 'barcode', 'generic_name', 'medicine_code']))->toBe($originalMedicine);
+});
+
+test('find medicine shows the medicine profile and links to catalog editing', function () {
+    $user = userWithPermissions(['stock.receive', 'medicines.view', 'medicines.edit']);
+    $medicine = Medicine::factory()->create([
+        'barcode' => '4800000000041',
+        'generic_name' => 'Medicine Lookup Result',
+    ]);
+    MedicineBatch::factory()->create(['medicine_id' => $medicine->id]);
+
+    $this->actingAs($user)
+        ->post(route('scanner.lookup'), ['barcode' => $medicine->barcode])
+        ->assertRedirect(route('medicines.show', $medicine));
+
+    $this->actingAs($user)
+        ->get(route('medicines.show', $medicine))
+        ->assertOk()
+        ->assertSee('Medicine Lookup Result')
+        ->assertSee(route('medicines.edit', $medicine), false)
+        ->assertSee('class="btn btn-gold"', false)
+        ->assertSee('class="btn btn-batch-gold btn-sm"', false)
+        ->assertSee('class="tab tab-batches"', false)
+        ->assertSee('class="btn btn-primary"', false)
+        ->assertSee('Edit');
 });
 
 test('an unmatched barcode is kept in the scanner field for correction', function () {
@@ -34,6 +58,17 @@ test('an unmatched barcode is kept in the scanner field for correction', functio
         ->assertRedirect(route('scanner'))
         ->assertSessionHasInput('barcode', '4800000000999')
         ->assertSessionHasErrors(['barcode']);
+});
+
+test('find medicine does not open the new medicine registration form for an unknown barcode', function () {
+    $user = userWithPermissions(['stock.receive', 'medicines.create']);
+
+    $this->from(route('scanner'))
+        ->actingAs($user)
+        ->post(route('scanner.lookup'), ['barcode' => '4800000000042'])
+        ->assertRedirect(route('scanner'))
+        ->assertSessionHasErrors('barcode')
+        ->assertSessionHasInput('barcode', '4800000000042');
 });
 
 test('a barcode scan can open restock with the matching medicine selected', function () {
@@ -111,7 +146,6 @@ test('scanner registration saves a medicine, batch, and transaction together wit
     $user = userWithPermissions(['medicines.create', 'stock.receive']);
     $category = MedicineCategory::factory()->create();
     $supplier = Supplier::factory()->create(['is_active' => true]);
-    $location = StorageLocation::factory()->create(['is_active' => true]);
     $barcode = '4800000000011';
 
     $this->actingAs($user)
@@ -138,14 +172,13 @@ test('scanner registration saves a medicine, batch, and transaction together wit
         ->and($medicine->storage_condition)->toBeNull()
         ->and($medicine->maximum_stock_level)->toBe(100)
         ->and(MedicineBatch::query()->where('medicine_id', $medicine->id)->value('quantity'))->toBe(12)
-        ->and(MedicineBatch::query()->where('medicine_id', $medicine->id)->value('supplier_id'))->toBe($supplier->id)
-        ->and(MedicineBatch::query()->where('medicine_id', $medicine->id)->value('storage_location_id'))->toBe($location->id);
+        ->and(MedicineBatch::query()->where('medicine_id', $medicine->id)->value('supplier_id'))->toBe($supplier->id);
     $this->assertDatabaseHas('inventory_transactions', ['medicine_id' => $medicine->id, 'quantity' => 12, 'type' => 'stock_in']);
     $this->assertDatabaseHas('audit_logs', ['action' => 'medicine_created', 'auditable_id' => $medicine->id]);
     $this->assertDatabaseHas('inventory_notifications', ['type' => 'stock_received']);
 });
 
-test('scanner registration does not require an existing storage location', function () {
+test('scanner registration works without storage-location records or batch fields', function () {
     $user = userWithPermissions(['medicines.create', 'stock.receive']);
     $category = MedicineCategory::factory()->create();
     $supplier = Supplier::factory()->create(['is_active' => true]);
@@ -166,23 +199,15 @@ test('scanner registration does not require an existing storage location', funct
 
     $medicine = Medicine::query()->where('barcode', '4800000000013')->firstOrFail();
 
-    $this->assertDatabaseHas('storage_locations', [
-        'code' => 'DEFAULT',
-        'name' => 'Default storage',
-        'is_active' => true,
-    ]);
-    $this->assertDatabaseHas('medicine_batches', [
-        'medicine_id' => $medicine->id,
-        'storage_location_id' => StorageLocation::query()->where('code', 'DEFAULT')->value('id'),
-    ]);
+    $this->assertDatabaseHas('medicine_batches', ['medicine_id' => $medicine->id]);
+    expect(Schema::hasTable('storage_locations'))->toBeFalse()
+        ->and(Schema::hasColumn('medicine_batches', 'storage_location_id'))->toBeFalse();
 });
 
 test('scanner registration derives a safe target stock level from the minimum stock level', function () {
     $user = userWithPermissions(['medicines.create', 'stock.receive']);
     $category = MedicineCategory::factory()->create();
     $supplier = Supplier::factory()->create(['is_active' => true]);
-    $location = StorageLocation::factory()->create(['is_active' => true]);
-
     $this->actingAs($user)
         ->post(route('scanner.register.store'), [
             'barcode' => '4800000000012',
@@ -204,7 +229,6 @@ test('scanner registration derives a safe target stock level from the minimum st
     ]);
     $this->assertDatabaseHas('medicine_batches', [
         'medicine_id' => Medicine::query()->where('barcode', '4800000000012')->value('id'),
-        'storage_location_id' => $location->id,
     ]);
 });
 
@@ -234,7 +258,9 @@ test('the scanner page uses a barcode reference and retains hardware scanner con
         ->assertSee('id="detect-usb-scanner"', false)
         ->assertSee('name="scan_action"', false)
         ->assertSee('Stock in new medicine')
-        ->assertSee('Restock this medicine');
+        ->assertSee('Restock this medicine')
+        ->assertSee("event.key === 'Enter' && event.target === input", false)
+        ->assertDontSee('Scanner-ready mode');
 });
 
 test('restock mode shows the scanned medicine stock and reorder recommendation', function () {

@@ -35,7 +35,7 @@ class TransactionController extends Controller
             'transactions' => $transactions,
             'medicines' => Medicine::query()->orderBy('generic_name')->get(),
             'users' => User::query()->orderBy('name')->get(),
-            'types' => TransactionType::cases(),
+            'types' => [TransactionType::StockIn, TransactionType::Dispensed, TransactionType::StockOut, TransactionType::Adjustment],
         ]);
     }
 }

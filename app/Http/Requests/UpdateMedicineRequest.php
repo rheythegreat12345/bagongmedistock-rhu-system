@@ -4,6 +4,7 @@ namespace App\Http\Requests;
 
 use App\Models\Setting;
 use Illuminate\Contracts\Validation\ValidationRule;
+use Illuminate\Contracts\Validation\Validator as ValidatorContract;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rule;
@@ -60,6 +61,20 @@ class UpdateMedicineRequest extends FormRequest
             'status' => ['required', 'in:active,inactive'],
             'authorization_pin' => ['required', 'digits:4'],
         ];
+    }
+
+    protected function failedValidation(ValidatorContract $validator): void
+    {
+        $this->replace($this->except(['authorization_pin']));
+        $this->query->remove('authorization_pin');
+        $this->json()->remove('authorization_pin');
+
+        $request = request();
+        $request->replace($request->except(['authorization_pin']));
+        $request->query->remove('authorization_pin');
+        $request->json()->remove('authorization_pin');
+
+        parent::failedValidation($validator);
     }
 
     /**

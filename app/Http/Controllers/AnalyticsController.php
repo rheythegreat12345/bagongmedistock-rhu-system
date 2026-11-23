@@ -13,7 +13,10 @@ class AnalyticsController extends Controller
 {
     public function __invoke(): View
     {
-        $transactions = InventoryTransaction::query()->with('medicine')->where('transacted_at', '>=', now()->subMonths(12)->startOfMonth())->get();
+        $transactions = InventoryTransaction::query()->with('medicine')
+            ->whereHas('medicine')
+            ->where('transacted_at', '>=', now()->subMonths(12)->startOfMonth())
+            ->get();
         $months = collect(range(11, 0))->map(fn (int $month) => now()->subMonths($month)->startOfMonth());
         $monthly = $transactions->groupBy(fn (InventoryTransaction $transaction) => $transaction->transacted_at->format('Y-m'));
 
@@ -42,7 +45,12 @@ class AnalyticsController extends Controller
             'decreasingDemand' => $trendData->where('change', '<', 0)->sortBy('change')->take(5),
             'inventoryValue' => MedicineBatch::query()->selectRaw('COALESCE(SUM(quantity * unit_cost), 0) as total')->value('total'),
             'stockTurnover' => MedicineBatch::query()->sum('quantity') > 0 ? round($dispensed->sum('quantity') / MedicineBatch::query()->sum('quantity'), 2) : 0,
-            'expirationTrend' => MedicineBatch::query()->with('medicine')->where('quantity', '>', 0)->orderBy('expiration_date')->limit(10)->get(),
+            'expirationTrend' => MedicineBatch::query()->with('medicine')
+                ->whereHas('medicine')
+                ->where('quantity', '>', 0)
+                ->orderBy('expiration_date')
+                ->limit(10)
+                ->get(),
             'totalVolume' => $transactions->count(),
         ]);
     }
